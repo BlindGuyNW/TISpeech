@@ -127,5 +127,43 @@ namespace TISpeech
         /// Check if Tolk is initialized and ready
         /// </summary>
         public static bool IsReady => tolkInitialized && tolk != null;
+
+        /// <summary>
+        /// Clean text by converting sprite icons to readable labels and removing HTML tags
+        /// Shared utility for all patches to ensure consistent text processing
+        /// </summary>
+        public static string CleanText(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return "";
+
+            // Replace resource sprite icons with text labels BEFORE removing other tags
+            // Sprites appear as: "42.5<sprite name="currency">/month" so we just replace with a space and the label
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""currency"">", " Money ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""influence"">", " Influence ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""boost"">", " Boost ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""ops"">", " Operations ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""mission_control"">", " Mission Control ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""research"">", " Research ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""projects"">", " Projects ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""water"">", " Water ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""volatiles"">", " Volatiles ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""metals"">", " Metals ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""noble_metals"">", " Noble Metals ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""fissiles"">", " Fissiles ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""antimatter"">", " Antimatter ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""exotics"">", " Exotics ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""population"">", " Population ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""nukes"">", " Nuclear Weapons ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            // Remove remaining TextMeshPro and HTML tags
+            text = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]+>", "");
+
+            // Remove multiple spaces and trim
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+            text = text.Trim();
+
+            return text;
+        }
     }
 }

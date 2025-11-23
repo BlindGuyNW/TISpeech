@@ -114,7 +114,7 @@ namespace TISpeech.Patches
                                 string result = sb.ToString().Trim();
                                 if (!string.IsNullOrEmpty(result))
                                 {
-                                    return CleanTooltipText(result);
+                                    return TISpeechMod.CleanText(result);
                                 }
                             }
                         }
@@ -139,23 +139,6 @@ namespace TISpeech.Patches
             return "";
         }
 
-        /// <summary>
-        /// Clean up tooltip text by removing HTML tags and excess whitespace
-        /// </summary>
-        private static string CleanTooltipText(string text)
-        {
-            if (string.IsNullOrEmpty(text))
-                return "";
-
-            // Remove TextMeshPro and HTML tags
-            text = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]+>", "");
-
-            // Remove multiple spaces and trim
-            text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
-            text = text.Trim();
-
-            return text;
-        }
 
         /// <summary>
         /// Clean up GameObject names for announcement

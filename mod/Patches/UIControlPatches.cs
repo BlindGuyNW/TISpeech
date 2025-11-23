@@ -237,7 +237,7 @@ namespace TISpeech.Patches
                 // Get location text
                 if (__instance.text != null && !string.IsNullOrEmpty(__instance.text.text))
                 {
-                    string locationName = CleanText(__instance.text.text);
+                    string locationName = TISpeechMod.CleanText(__instance.text.text);
                     string locationType = __instance.isOrigin ? "Origin" : "Destination";
                     AnnounceControl($"{locationType}: {locationName}");
                 }
@@ -258,7 +258,7 @@ namespace TISpeech.Patches
             var tmpText = obj.GetComponentInChildren<TMP_Text>();
             if (tmpText != null && !string.IsNullOrEmpty(tmpText.text))
             {
-                return CleanText(tmpText.text);
+                return TISpeechMod.CleanText(tmpText.text);
             }
 
             // Fallback to GameObject name
@@ -270,7 +270,7 @@ namespace TISpeech.Patches
             var tmpText = obj.GetComponentInChildren<TMP_Text>();
             if (tmpText != null && !string.IsNullOrEmpty(tmpText.text))
             {
-                return CleanText(tmpText.text);
+                return TISpeechMod.CleanText(tmpText.text);
             }
             return CleanObjectName(obj.name);
         }
@@ -282,7 +282,7 @@ namespace TISpeech.Patches
             if (tmpTexts != null && tmpTexts.Length > 0)
             {
                 // First text component is usually the label
-                return CleanText(tmpTexts[0].text);
+                return TISpeechMod.CleanText(tmpTexts[0].text);
             }
             return CleanObjectName(obj.name);
         }
@@ -338,7 +338,7 @@ namespace TISpeech.Patches
                 // Get the item name
                 if (controller.itemName != null && !string.IsNullOrEmpty(controller.itemName.text))
                 {
-                    sb.Append(CleanText(controller.itemName.text));
+                    sb.Append(TISpeechMod.CleanText(controller.itemName.text));
                 }
 
                 // Get location info if available
@@ -560,12 +560,12 @@ namespace TISpeech.Patches
 
                 if (controller.CouncilorName != null && !string.IsNullOrEmpty(controller.CouncilorName.text))
                 {
-                    sb.Append(CleanText(controller.CouncilorName.text));
+                    sb.Append(TISpeechMod.CleanText(controller.CouncilorName.text));
                 }
 
                 if (controller.CouncilorProfession != null && !string.IsNullOrEmpty(controller.CouncilorProfession.text))
                 {
-                    sb.Append($", {CleanText(controller.CouncilorProfession.text)}");
+                    sb.Append($", {TISpeechMod.CleanText(controller.CouncilorProfession.text)}");
                 }
 
                 if (controller.CurrentMission != null && controller.CurrentMission.enabled)
@@ -589,7 +589,7 @@ namespace TISpeech.Patches
                 if (controller.SelectProjectButtonText != null && !string.IsNullOrEmpty(controller.SelectProjectButtonText.text))
                 {
                     var sb = new StringBuilder("Project: ");
-                    sb.Append(CleanText(controller.SelectProjectButtonText.text));
+                    sb.Append(TISpeechMod.CleanText(controller.SelectProjectButtonText.text));
 
                     // Check toggles
                     if (controller.favoriteToggle != null && controller.favoriteToggle.isOn)
@@ -619,17 +619,17 @@ namespace TISpeech.Patches
 
                 if (controller.regionName != null && !string.IsNullOrEmpty(controller.regionName.text))
                 {
-                    sb.Append(CleanText(controller.regionName.text));
+                    sb.Append(TISpeechMod.CleanText(controller.regionName.text));
                 }
 
                 if (controller.regionPop != null && !string.IsNullOrEmpty(controller.regionPop.text))
                 {
-                    sb.Append($", population: {CleanText(controller.regionPop.text)} million");
+                    sb.Append($", population: {TISpeechMod.CleanText(controller.regionPop.text)} million");
                 }
 
                 if (controller.regionBoost != null && !string.IsNullOrEmpty(controller.regionBoost.text))
                 {
-                    string boost = CleanText(controller.regionBoost.text);
+                    string boost = TISpeechMod.CleanText(controller.regionBoost.text);
                     if (boost != "-")
                     {
                         sb.Append($", boost: {boost}");
@@ -638,21 +638,21 @@ namespace TISpeech.Patches
 
                 if (controller.regionMC != null && !string.IsNullOrEmpty(controller.regionMC.text))
                 {
-                    sb.Append($", mission control: {CleanText(controller.regionMC.text)}");
+                    sb.Append($", mission control: {TISpeechMod.CleanText(controller.regionMC.text)}");
                 }
 
                 // Check for occupation
                 if (controller.occupierFlag != null && controller.occupierFlag.enabled &&
                     controller.occupationPct != null && !string.IsNullOrEmpty(controller.occupationPct.text))
                 {
-                    sb.Append($", occupied: {CleanText(controller.occupationPct.text)}");
+                    sb.Append($", occupied: {TISpeechMod.CleanText(controller.occupationPct.text)}");
                 }
 
                 // Check for abductions
                 if (controller.abductions != null && controller.abductions.enabled &&
                     !string.IsNullOrEmpty(controller.abductions.text))
                 {
-                    sb.Append($", abductions: {CleanText(controller.abductions.text)}");
+                    sb.Append($", abductions: {TISpeechMod.CleanText(controller.abductions.text)}");
                 }
 
                 return sb.ToString();
@@ -673,7 +673,7 @@ namespace TISpeech.Patches
                 var tmpText = controller.GetComponentInChildren<TMP_Text>();
                 if (tmpText != null && !string.IsNullOrEmpty(tmpText.text))
                 {
-                    return "Army: " + CleanText(tmpText.text);
+                    return "Army: " + TISpeechMod.CleanText(tmpText.text);
                 }
             }
             catch (Exception ex)
@@ -692,19 +692,19 @@ namespace TISpeech.Patches
                 // Get councilor name
                 if (controller.councilorName != null && !string.IsNullOrEmpty(controller.councilorName.text))
                 {
-                    sb.Append(CleanText(controller.councilorName.text));
+                    sb.Append(TISpeechMod.CleanText(controller.councilorName.text));
                 }
 
                 // Get mission name
                 if (controller.missionName != null && !string.IsNullOrEmpty(controller.missionName.text))
                 {
-                    sb.Append($", mission: {CleanText(controller.missionName.text)}");
+                    sb.Append($", mission: {TISpeechMod.CleanText(controller.missionName.text)}");
                 }
 
                 // Get success chance
                 if (controller.successChanceText != null && !string.IsNullOrEmpty(controller.successChanceText.text))
                 {
-                    sb.Append($", success chance: {CleanText(controller.successChanceText.text)}");
+                    sb.Append($", success chance: {TISpeechMod.CleanText(controller.successChanceText.text)}");
                 }
 
                 return sb.ToString();
@@ -722,7 +722,7 @@ namespace TISpeech.Patches
             {
                 if (controller.SelectTechButtonText != null && !string.IsNullOrEmpty(controller.SelectTechButtonText.text))
                 {
-                    return "Tech: " + CleanText(controller.SelectTechButtonText.text);
+                    return "Tech: " + TISpeechMod.CleanText(controller.SelectTechButtonText.text);
                 }
             }
             catch (Exception ex)
