@@ -65,6 +65,117 @@ namespace TISpeech.Patches
             }
         }
 
+        /// <summary>
+        /// Patch CanvasControllerBase.Show to add EventTriggers to plain Unity buttons
+        /// This catches buttons that don't have UIButtonFeedback component
+        /// </summary>
+        [HarmonyPatch(typeof(CanvasControllerBase), "Show")]
+        [HarmonyPostfix]
+        public static void CanvasControllerBase_Show_Postfix(CanvasControllerBase __instance)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                // Find all buttons in this canvas that don't have UIButtonFeedback
+                AddGenericButtonHandlers(__instance.gameObject);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in CanvasControllerBase.Show patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Add EventTrigger to all buttons without UIButtonFeedback in a GameObject hierarchy
+        /// </summary>
+        private static void AddGenericButtonHandlers(GameObject root)
+        {
+            try
+            {
+                if (root == null)
+                    return;
+
+                // Get all Button components in children
+                var buttons = root.GetComponentsInChildren<Button>(includeInactive: false);
+
+                foreach (var button in buttons)
+                {
+                    if (button == null)
+                        continue;
+
+                    // Skip if this button already has UIButtonFeedback (already handled)
+                    if (button.GetComponent<UIButtonFeedback>() != null)
+                        continue;
+
+                    // Skip if this button already has a TooltipTrigger (will be announced by tooltip)
+                    if (button.GetComponent<TooltipTrigger>() != null)
+                        continue;
+
+                    // Check if we already added an EventTrigger
+                    EventTrigger trigger = button.GetComponent<EventTrigger>();
+                    if (trigger != null)
+                    {
+                        // Check if we already added our handler
+                        bool hasOurHandler = false;
+                        foreach (var entry in trigger.triggers)
+                        {
+                            if (entry.eventID == EventTriggerType.PointerEnter)
+                            {
+                                hasOurHandler = true;
+                                break;
+                            }
+                        }
+                        if (hasOurHandler)
+                            continue; // Already handled
+                    }
+                    else
+                    {
+                        trigger = button.gameObject.AddComponent<EventTrigger>();
+                    }
+
+                    // Add pointer enter event
+                    EventTrigger.Entry enterEntry = new EventTrigger.Entry();
+                    enterEntry.eventID = EventTriggerType.PointerEnter;
+                    enterEntry.callback.AddListener((data) => OnGenericButtonHover(button));
+                    trigger.triggers.Add(enterEntry);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error adding generic button handlers: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Called when hovering over a generic Unity button (no UIButtonFeedback)
+        /// </summary>
+        private static void OnGenericButtonHover(Button button)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady || button == null)
+                    return;
+
+                // Check if button is enabled/interactable
+                if (!button.enabled || !button.interactable)
+                    return;
+
+                // Extract button text
+                string context = ExtractButtonText(button.gameObject);
+
+                if (!string.IsNullOrEmpty(context))
+                {
+                    AnnounceControl($"Button: {context}");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in generic button hover handler: {ex.Message}");
+            }
+        }
+
         #endregion
 
         #region Toggle Patches
