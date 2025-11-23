@@ -324,6 +324,15 @@ namespace TISpeech.Patches
             if (tech != null)
                 return BuildTechItemContext(tech);
 
+            var combinedResearch = obj.GetComponentInParent<CombinedResearchListItemController>();
+            if (combinedResearch != null)
+                return BuildCombinedResearchItemContext(combinedResearch);
+
+            // EffectContextListItemController is internal, use reflection
+            var effectContext = GetEffectContextController(obj);
+            if (effectContext != null)
+                return BuildEffectContextItemContext(effectContext);
+
             // Add more list item types as needed
 
             return null;
@@ -728,6 +737,65 @@ namespace TISpeech.Patches
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error building tech item context: {ex.Message}");
+            }
+            return null;
+        }
+
+        private static string BuildCombinedResearchItemContext(CombinedResearchListItemController controller)
+        {
+            try
+            {
+                if (controller.selectTechButtonText != null && !string.IsNullOrEmpty(controller.selectTechButtonText.text))
+                {
+                    return TISpeechMod.CleanText(controller.selectTechButtonText.text);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error building combined research item context: {ex.Message}");
+            }
+            return null;
+        }
+
+        private static string BuildEffectContextItemContext(object controller)
+        {
+            try
+            {
+                // EffectContextListItemController is internal, use reflection
+                var textField = AccessTools.Field(controller.GetType(), "selectContextButtonText");
+                if (textField != null)
+                {
+                    var tmpText = textField.GetValue(controller) as TMP_Text;
+                    if (tmpText != null && !string.IsNullOrEmpty(tmpText.text))
+                    {
+                        return TISpeechMod.CleanText(tmpText.text);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error building effect context item context: {ex.Message}");
+            }
+            return null;
+        }
+
+        private static object GetEffectContextController(GameObject obj)
+        {
+            try
+            {
+                // EffectContextListItemController is internal, find it by name
+                var components = obj.GetComponentsInParent<MonoBehaviour>();
+                foreach (var component in components)
+                {
+                    if (component != null && component.GetType().Name == "EffectContextListItemController")
+                    {
+                        return component;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error getting EffectContextListItemController: {ex.Message}");
             }
             return null;
         }
