@@ -254,6 +254,149 @@ namespace TISpeech.Patches
             }
         }
 
+        /// <summary>
+        /// Universal patch for TMP_Dropdown to add EventTrigger for accessibility
+        /// This ensures all 50+ dropdowns in the game are accessible, including mission target selection
+        /// Patches Start() to add hover handlers dynamically to dropdowns without UIDropdownFeedback
+        /// </summary>
+        [HarmonyPatch(typeof(TMP_Dropdown), "Start")]
+        [HarmonyPostfix]
+        public static void TMP_Dropdown_Start_Postfix(TMP_Dropdown __instance)
+        {
+            try
+            {
+                // Don't add handlers before Tolk is initialized
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                // If this dropdown already has UIDropdownFeedback, skip it
+                // Our UIDropdownFeedback patch will handle those cases
+                if (__instance.GetComponent<UIDropdownFeedback>() != null)
+                    return;
+
+                // Add EventTrigger if not already present
+                var eventTrigger = __instance.gameObject.GetComponent<UnityEngine.EventSystems.EventTrigger>();
+                if (eventTrigger == null)
+                {
+                    eventTrigger = __instance.gameObject.AddComponent<UnityEngine.EventSystems.EventTrigger>();
+                }
+
+                // Check if we already added our handler (avoid duplicates if Start() is called multiple times)
+                bool hasOurHandler = false;
+                foreach (var trigger in eventTrigger.triggers)
+                {
+                    if (trigger.eventID == UnityEngine.EventSystems.EventTriggerType.PointerEnter)
+                    {
+                        hasOurHandler = true;
+                        break;
+                    }
+                }
+
+                if (!hasOurHandler)
+                {
+                    // Add pointer enter handler
+                    var entry = new UnityEngine.EventSystems.EventTrigger.Entry();
+                    entry.eventID = UnityEngine.EventSystems.EventTriggerType.PointerEnter;
+                    entry.callback.AddListener((data) => OnDropdownHover(__instance));
+                    eventTrigger.triggers.Add(entry);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in TMP_Dropdown Start patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Handler called when hovering over a dropdown without UIDropdownFeedback
+        /// </summary>
+        private static void OnDropdownHover(TMP_Dropdown dropdown)
+        {
+            try
+            {
+                // Check if dropdown is enabled and interactable
+                if (!dropdown.enabled || !dropdown.interactable)
+                    return;
+
+                string dropdownLabel = ExtractDropdownText(dropdown.gameObject);
+                string currentValue = "";
+
+                if (dropdown.options != null && dropdown.value >= 0 && dropdown.value < dropdown.options.Count)
+                {
+                    currentValue = TISpeechMod.CleanText(dropdown.options[dropdown.value].text);
+                }
+
+                if (!string.IsNullOrEmpty(dropdownLabel))
+                {
+                    string announcement = string.IsNullOrEmpty(currentValue)
+                        ? $"Dropdown: {dropdownLabel}"
+                        : $"Dropdown: {dropdownLabel}, current: {currentValue}";
+                    AnnounceControl(announcement);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in dropdown hover handler: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch TMP_Dropdown.DropdownItem to announce individual dropdown options when hovering
+        /// This makes the dropdown option list accessible when opened
+        /// </summary>
+        [HarmonyPatch]
+        public static class DropdownItemPatch
+        {
+            static System.Reflection.MethodBase TargetMethod()
+            {
+                // Get the nested DropdownItem class from TMP_Dropdown
+                var dropdownType = typeof(TMP_Dropdown);
+                var dropdownItemType = dropdownType.GetNestedType("DropdownItem", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+
+                if (dropdownItemType == null)
+                {
+                    MelonLogger.Error("Could not find TMP_Dropdown.DropdownItem type");
+                    return null;
+                }
+
+                // Get the OnPointerEnter method
+                var method = dropdownItemType.GetMethod("OnPointerEnter", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (method == null)
+                {
+                    MelonLogger.Error("Could not find OnPointerEnter method on DropdownItem");
+                }
+                return method;
+            }
+
+            [HarmonyPostfix]
+            public static void OnPointerEnter_Postfix(object __instance, PointerEventData eventData)
+            {
+                try
+                {
+                    if (!TISpeechMod.IsReady)
+                        return;
+
+                    // Get the text component using reflection
+                    var instanceType = __instance.GetType();
+                    var textField = instanceType.GetField("m_Text", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                    if (textField != null)
+                    {
+                        var text = textField.GetValue(__instance) as TMP_Text;
+                        if (text != null && !string.IsNullOrEmpty(text.text))
+                        {
+                            string cleanedText = TISpeechMod.CleanText(text.text);
+                            TISpeechMod.Speak(cleanedText, interrupt: false);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Error($"Error in DropdownItem OnPointerEnter patch: {ex.Message}");
+                }
+            }
+        }
+
         #endregion
 
         #region Mission Button Patches

@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(./build_and_deploy.bat)"
+      "Bash(./build_and_deploy.bat)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []
