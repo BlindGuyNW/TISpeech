@@ -137,6 +137,17 @@ namespace TISpeech
             if (string.IsNullOrEmpty(text))
                 return "";
 
+            // Replace councilor attribute sprite icons with text labels BEFORE removing other tags
+            // These appear in tooltips like: "<sprite name="attribute_persuasion">10<sprite name="attribute_investigation">2"
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""attribute_persuasion"">", " Persuasion: ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""attribute_investigation"">", " Investigation: ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""attribute_espionage"">", " Espionage: ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""attribute_command"">", " Command: ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""attribute_administration"">", " Administration: ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""attribute_science"">", " Science: ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""attribute_security"">", " Security: ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""attribute_loyalty"">", " Loyalty: ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
             // Replace resource sprite icons with text labels BEFORE removing other tags
             // Sprites appear as: "42.5<sprite name="currency">/month" so we just replace with a space and the label
             text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""currency"">", " Money ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
