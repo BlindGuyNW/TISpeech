@@ -211,6 +211,123 @@ Different controllers use different update method names:
 - Con: Leaves some screens inaccessible
 - Status: Current strategy
 
+### Confirmation Dialog Pattern (Game Architecture)
+
+Terra Invicta has many confirmation dialogs (recruitment, operations, missions, notifications) that appear via `GameObject.SetActive(true)` instead of `CanvasControllerBase.Show()`. These dialogs contain buttons that need accessibility support.
+
+#### The Problem
+
+**Symptom:** Buttons in confirmation dialogs (Confirm, Decline, OK, Cancel, etc.) don't announce when hovered.
+
+**Root Cause:**
+- Most UI elements are shown via `CanvasControllerBase.Show()`, which triggers our patches
+- Confirmation dialogs use `GameObject.SetActive(true)` directly, bypassing our patches
+- The game has **922 SetActive calls across 126 files** - patching Unity core methods (GameObject.SetActive, Canvas.OnEnable) is risky and has severe performance implications
+
+**Examples of affected dialogs:**
+- Recruitment confirmation (Confirm/Decline)
+- Operation confirmations
+- Mission confirmations
+- Notification alerts (OK/Go To)
+- Diplomacy agreements
+- Policy confirmations
+
+#### The Solution Pattern
+
+**Key insight:** All major screen controllers extend `CanvasControllerBase` and call `Initialize()` during setup. This is where they create confirmation dialog GameObjects.
+
+**Pattern:** Patch the `Initialize()` method of controllers that have confirmation dialogs, and add EventTriggers to buttons at initialization time.
+
+```csharp
+[HarmonyPatch(typeof(SomeController), "Initialize")]
+[HarmonyPostfix]
+public static void SomeController_Initialize_Postfix(SomeController __instance)
+{
+    try
+    {
+        if (!TISpeechMod.IsReady || __instance == null)
+            return;
+
+        // Add handlers to buttons in the confirmation dialog GameObject
+        if (__instance.confirmDialogBox != null)
+        {
+            AddGenericButtonHandlers(__instance.confirmDialogBox);
+            MelonLogger.Msg("Added button handlers to SomeController confirmation dialogs");
+        }
+    }
+    catch (Exception ex)
+    {
+        MelonLogger.Error($"Error in SomeController.Initialize patch: {ex.Message}");
+    }
+}
+```
+
+#### Implementation Examples
+
+**See `UIControlPatches.cs` for working implementations:**
+
+1. **CouncilGridController** - Recruitment confirmations
+   ```csharp
+   [HarmonyPatch(typeof(CouncilGridController), "Initialize")]
+   // Adds handlers to confirmRecruitBox (Confirm/Decline buttons)
+   ```
+
+2. **OperationCanvasController** - Operation confirmations
+   ```csharp
+   [HarmonyPatch(typeof(OperationCanvasController), "Initialize")]
+   // Adds handlers to confirmPanel
+   ```
+
+3. **NotificationScreenController** - Alert dialogs
+   ```csharp
+   [HarmonyPatch(typeof(NotificationScreenController), "Initialize")]
+   // Adds handlers to singleAlertBox (OK/Go To buttons)
+   ```
+
+4. **CouncilorMissionCanvasController** - Mission confirmations
+   ```csharp
+   [HarmonyPatch(typeof(CouncilorMissionCanvasController), "Initialize")]
+   // Adds handlers to mission confirmation dialogs
+   ```
+
+#### How to Add New Confirmation Dialog Patches
+
+**Step 1: Identify the controller**
+- Find which screen/canvas has the confirmation dialog
+- Look for controllers that extend `CanvasControllerBase`
+- Common examples: `*ScreenController`, `*CanvasController`, `*Controller`
+
+**Step 2: Find the confirmation dialog GameObject**
+- Search the decompiled controller for `public GameObject confirm*` or `public GameObject *Box`
+- Look for fields like `confirmPanel`, `confirmDialog`, `confirmationBox`, etc.
+- Check the controller's `Initialize()` method to see which GameObjects are set up
+
+**Step 3: Create the patch**
+- Patch the controller's `Initialize()` method with `[HarmonyPostfix]`
+- In the postfix, call `AddGenericButtonHandlers()` on the confirmation dialog GameObject
+- `AddGenericButtonHandlers()` finds all buttons without `UIButtonFeedback` or `TooltipTrigger` and adds EventTriggers
+
+**Step 4: Test**
+- Build and deploy the mod
+- Navigate to the screen with the confirmation dialog
+- Trigger the dialog and hover over buttons
+- Check MelonLoader logs for "Added button handlers" and "Announced control" messages
+
+#### Why This Approach Works
+
+✅ **Game-specific** - Only patches Terra Invicta code, not Unity core methods
+✅ **Surgical** - Runs once per controller during initialization (zero performance impact)
+✅ **Reliable** - UI elements are guaranteed to exist at initialization time
+✅ **No Harmony errors** - All `Initialize()` methods exist and can be patched
+✅ **Maintainable** - Easy to add new patches as needed
+✅ **Safe** - Doesn't interfere with game logic or lifecycle
+
+#### When NOT to Use This Pattern
+
+- If the dialog is already shown via `CanvasControllerBase.Show()` (existing patch handles it)
+- If buttons already have `UIButtonFeedback` or `TooltipTrigger` components (existing patches handle them)
+- If the dialog is created dynamically after initialization (use a different lifecycle method)
+
 ### Project References
 
 The .csproj references game DLLs in specific locations:
@@ -231,3 +348,10 @@ The .csproj references game DLLs in specific locations:
 5. **Tooltip text is in TextFields, not in TooltipTrigger directly** - Don't try to get tooltip text from the trigger object itself; navigate through `Tooltip.TextFields` to get actual content.
 
 6. **Avoid patching methods with TIUtilities static field references** - Some game methods (like `ResearchPanelController.UpdatePanel`) contain references to static fields from `TIUtilities` (e.g., `TIUtilities.UIColorIndicatorNegative`). When Harmony tries to patch these methods during mod loading, it triggers initialization of `TIUtilities` before the game is ready, causing a `TypeInitializationException`. **Solution:** Patch simpler methods instead (like `OnEnable`) or patch methods that run after game initialization is complete.
+
+7. **DO NOT patch Unity core methods for UI accessibility** - Do NOT attempt to patch `GameObject.SetActive`, `Canvas.OnEnable`, or `Canvas.set_enabled` to catch confirmation dialogs. These approaches fail or have severe performance implications:
+   - `Canvas.OnEnable` - Method doesn't exist (Canvas doesn't override MonoBehaviour.OnEnable)
+   - `Canvas.set_enabled` - Harmony cannot reliably patch property setters on Unity core types
+   - `GameObject.SetActive` - Called thousands of times per second, creates massive performance hit
+
+   **Solution:** Use the **Confirmation Dialog Pattern** documented above - patch controller `Initialize()` methods instead. This is game-specific, reliable, and has zero performance impact.

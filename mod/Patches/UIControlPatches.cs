@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using HarmonyLib;
 using MelonLoader;
@@ -84,6 +85,108 @@ namespace TISpeech.Patches
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error in CanvasControllerBase.Show patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch CouncilGridController.Initialize to add EventTriggers to confirmation dialog buttons
+        /// This catches the recruitment confirmation (Confirm/Decline) buttons
+        /// </summary>
+        [HarmonyPatch(typeof(CouncilGridController), "Initialize")]
+        [HarmonyPostfix]
+        public static void CouncilGridController_Initialize_Postfix(CouncilGridController __instance)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady || __instance == null)
+                    return;
+
+                // Add handlers to buttons in the recruitment confirmation dialog
+                if (__instance.confirmRecruitBox != null)
+                {
+                    AddGenericButtonHandlers(__instance.confirmRecruitBox);
+                    MelonLogger.Msg("Added button handlers to CouncilGridController confirmation dialogs");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in CouncilGridController.Initialize patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch OperationCanvasController.Initialize to add EventTriggers to operation confirmation buttons
+        /// This catches operation confirmation dialogs
+        /// </summary>
+        [HarmonyPatch(typeof(OperationCanvasController), "Initialize")]
+        [HarmonyPostfix]
+        public static void OperationCanvasController_Initialize_Postfix(OperationCanvasController __instance)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady || __instance == null)
+                    return;
+
+                // Add handlers to buttons in the operation confirmation dialog
+                if (__instance.confirmPanel != null)
+                {
+                    AddGenericButtonHandlers(__instance.confirmPanel);
+                    MelonLogger.Msg("Added button handlers to OperationCanvasController confirmation dialogs");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in OperationCanvasController.Initialize patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch NotificationScreenController.Initialize to add EventTriggers to alert dialog buttons
+        /// This catches notification alert dialogs (OK/Go To buttons)
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "Initialize")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_Initialize_Postfix(NotificationScreenController __instance)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady || __instance == null)
+                    return;
+
+                // Add handlers to buttons in alert dialogs
+                if (__instance.singleAlertBox != null)
+                {
+                    AddGenericButtonHandlers(__instance.singleAlertBox);
+                    MelonLogger.Msg("Added button handlers to NotificationScreenController alert dialogs");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in NotificationScreenController.Initialize patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch CouncilorMissionCanvasController.Initialize to add EventTriggers to mission confirmation buttons
+        /// This catches mission confirmation dialogs
+        /// </summary>
+        [HarmonyPatch(typeof(CouncilorMissionCanvasController), "Initialize")]
+        [HarmonyPostfix]
+        public static void CouncilorMissionCanvasController_Initialize_Postfix(CouncilorMissionCanvasController __instance)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady || __instance == null)
+                    return;
+
+                // Add handlers to all buttons in the mission canvas
+                // Mission canvas has various confirmation dialogs
+                AddGenericButtonHandlers(__instance.gameObject);
+                MelonLogger.Msg("Added button handlers to CouncilorMissionCanvasController dialogs");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in CouncilorMissionCanvasController.Initialize patch: {ex.Message}");
             }
         }
 
