@@ -221,6 +221,18 @@ namespace TISpeech.Patches
                     AddTextHoverHandler(panel.ContributionWeightPercentageText, slotContext, "Daily Contribution");
                 }
 
+                // Add hover to tech category bonus (the percentage shown below the tech category icon)
+                if (panel.techCategoryBonus != null)
+                {
+                    AddTextHoverHandler(panel.techCategoryBonus, slotContext, "Tech Category Bonus");
+                }
+
+                // Add hover to research type bonus (the percentage shown next to the faction icon/leader indicator)
+                if (panel.researchTypeBonus != null)
+                {
+                    AddTextHoverHandler(panel.researchTypeBonus, slotContext, "Research Type Bonus");
+                }
+
                 MelonLogger.Msg($"Added research panel event handlers to {slotContext}");
             }
             catch (Exception ex)
