@@ -105,7 +105,24 @@ namespace TISpeech.Patches
                 if (__instance.confirmRecruitBox != null)
                 {
                     AddGenericButtonHandlers(__instance.confirmRecruitBox);
-                    MelonLogger.Msg("Added button handlers to CouncilGridController confirmation dialogs");
+                    MelonLogger.Msg("Added button handlers to CouncilGridController recruitment confirmation");
+                }
+
+                // Add handlers to org operation confirmation dialogs (purchase, sell, move)
+                if (__instance.confirmMovePanel != null)
+                {
+                    AddGenericButtonHandlers(__instance.confirmMovePanel);
+                    MelonLogger.Msg("Added button handlers to org confirmMovePanel");
+                }
+                if (__instance.confirmPurchase != null)
+                {
+                    AddGenericButtonHandlers(__instance.confirmPurchase);
+                    MelonLogger.Msg("Added button handlers to org confirmPurchase");
+                }
+                if (__instance.confirmSell != null)
+                {
+                    AddGenericButtonHandlers(__instance.confirmSell);
+                    MelonLogger.Msg("Added button handlers to org confirmSell");
                 }
             }
             catch (Exception ex)
