@@ -15,7 +15,6 @@ namespace TISpeech
     {
         private static Tolk.Tolk tolk;
         private static bool tolkInitialized = false;
-        private static SlotCursor slotCursor;
 
         public override void OnInitializeMelon()
         {
@@ -47,17 +46,6 @@ namespace TISpeech
                 LoggerInstance.Error($"Stack trace: {ex.StackTrace}");
             }
 
-            // Initialize slot cursor navigation system
-            try
-            {
-                slotCursor = new SlotCursor();
-                LoggerInstance.Msg("Slot cursor navigation system initialized");
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Error($"Failed to initialize slot cursor: {ex.Message}");
-            }
-
             LoggerInstance.Msg("Terra Invicta Screen Reader Mod initialized successfully!");
         }
 
@@ -75,12 +63,6 @@ namespace TISpeech
         {
             // Check for accessibility keyboard commands each frame
             AccessibilityCommands.CheckKeyboardInput();
-
-            // Update slot cursor navigation
-            if (slotCursor != null)
-            {
-                slotCursor.Update();
-            }
         }
 
         /// <summary>

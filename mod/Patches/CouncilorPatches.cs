@@ -46,6 +46,20 @@ namespace TISpeech.Patches
                     return;
 
                 AddCouncilorGridItemHandlers(__instance);
+
+                // Add DialogAnnouncer to the advice panel if it exists
+                if (__instance.councilorAdvicePanel != null)
+                {
+                    var announcer = __instance.councilorAdvicePanel.GetComponent<DialogAnnouncer>();
+                    if (announcer == null)
+                    {
+                        string councilorName = TISpeechMod.CleanText(__instance.councilorName?.text ?? "Councilor");
+                        announcer = __instance.councilorAdvicePanel.AddComponent<DialogAnnouncer>();
+                        announcer.dialogName = $"Advice from {councilorName}";
+                        announcer.announceOnEnable = true;
+                        announcer.focusFirstButton = false; // Advice panel may not have buttons to focus
+                    }
+                }
             }
             catch (Exception ex)
             {

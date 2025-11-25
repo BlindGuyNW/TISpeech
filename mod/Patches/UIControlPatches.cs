@@ -13,6 +13,128 @@ using ModelShark;
 namespace TISpeech.Patches
 {
     /// <summary>
+    /// Component that announces when a dialog/panel becomes active via SetActive(true)
+    /// Add this to confirmation dialogs during Initialize to detect when they appear
+    /// </summary>
+    public class DialogAnnouncer : MonoBehaviour
+    {
+        public string dialogName = "Dialog";
+        public bool announceOnEnable = true;
+        public bool focusFirstButton = true;
+
+        private static float lastAnnounceTime = 0f;
+        private const float ANNOUNCE_COOLDOWN = 0.3f;
+
+        void OnEnable()
+        {
+            if (!announceOnEnable || !TISpeechMod.IsReady)
+                return;
+
+            // Cooldown to prevent rapid-fire announcements
+            float currentTime = Time.unscaledTime;
+            if (currentTime - lastAnnounceTime < ANNOUNCE_COOLDOWN)
+                return;
+            lastAnnounceTime = currentTime;
+
+            // Delay slightly to let Unity finish activating children
+            StartCoroutine(AnnounceAfterFrame());
+        }
+
+        private System.Collections.IEnumerator AnnounceAfterFrame()
+        {
+            yield return null; // Wait one frame
+
+            if (!gameObject.activeInHierarchy)
+                yield break;
+
+            // Build announcement from dialog content
+            string announcement = BuildDialogAnnouncement();
+
+            if (!string.IsNullOrEmpty(announcement))
+            {
+                TISpeechMod.Speak(announcement, interrupt: true);
+                MelonLogger.Msg($"Dialog appeared: {announcement}");
+            }
+
+            // Optionally focus the first button
+            if (focusFirstButton)
+            {
+                FocusFirstInteractable();
+            }
+        }
+
+        private string BuildDialogAnnouncement()
+        {
+            var sb = new StringBuilder();
+            sb.Append(dialogName);
+
+            // Try to find and include dialog text content
+            var textComponents = GetComponentsInChildren<TMP_Text>(includeInactive: false);
+            foreach (var text in textComponents)
+            {
+                if (text == null || string.IsNullOrEmpty(text.text))
+                    continue;
+
+                // Skip button labels (short text), look for body text
+                string cleanedText = TISpeechMod.CleanText(text.text);
+                if (cleanedText.Length > 20 && !cleanedText.Contains("Button"))
+                {
+                    sb.Append(". ");
+                    sb.Append(cleanedText);
+                    break; // Just get the first substantial text
+                }
+            }
+
+            // List available buttons
+            var buttons = GetComponentsInChildren<Button>(includeInactive: false);
+            var buttonNames = new List<string>();
+            foreach (var button in buttons)
+            {
+                if (button == null || !button.interactable)
+                    continue;
+
+                var buttonText = button.GetComponentInChildren<TMP_Text>();
+                if (buttonText != null && !string.IsNullOrEmpty(buttonText.text))
+                {
+                    string btnName = TISpeechMod.CleanText(buttonText.text);
+                    if (!string.IsNullOrEmpty(btnName) && btnName.Length < 30)
+                    {
+                        buttonNames.Add(btnName);
+                    }
+                }
+            }
+
+            if (buttonNames.Count > 0)
+            {
+                sb.Append(". Options: ");
+                sb.Append(string.Join(", ", buttonNames));
+            }
+
+            return sb.ToString();
+        }
+
+        private void FocusFirstInteractable()
+        {
+            // Find first interactable button
+            var buttons = GetComponentsInChildren<Button>(includeInactive: false);
+            foreach (var button in buttons)
+            {
+                if (button != null && button.interactable && button.gameObject.activeInHierarchy)
+                {
+                    // Set as selected in EventSystem
+                    var eventSystem = EventSystem.current;
+                    if (eventSystem != null)
+                    {
+                        eventSystem.SetSelectedGameObject(button.gameObject);
+                        MelonLogger.Msg($"Focused button: {button.gameObject.name}");
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Harmony patches for UI controls (buttons, toggles, dropdowns) to provide screen reader accessibility
     /// Announces control information when no tooltip is present
     /// </summary>
@@ -105,24 +227,48 @@ namespace TISpeech.Patches
                 if (__instance.confirmRecruitBox != null)
                 {
                     AddGenericButtonHandlers(__instance.confirmRecruitBox);
-                    MelonLogger.Msg("Added button handlers to CouncilGridController recruitment confirmation");
+                    AddDialogAnnouncer(__instance.confirmRecruitBox, "Recruitment Confirmation");
+                    MelonLogger.Msg("Added button handlers and announcer to recruitment confirmation");
                 }
 
                 // Add handlers to org operation confirmation dialogs (purchase, sell, move)
                 if (__instance.confirmMovePanel != null)
                 {
                     AddGenericButtonHandlers(__instance.confirmMovePanel);
-                    MelonLogger.Msg("Added button handlers to org confirmMovePanel");
+                    AddDialogAnnouncer(__instance.confirmMovePanel, "Move Confirmation");
+                    MelonLogger.Msg("Added button handlers and announcer to confirmMovePanel");
                 }
                 if (__instance.confirmPurchase != null)
                 {
                     AddGenericButtonHandlers(__instance.confirmPurchase);
-                    MelonLogger.Msg("Added button handlers to org confirmPurchase");
+                    AddDialogAnnouncer(__instance.confirmPurchase, "Purchase Confirmation");
+                    MelonLogger.Msg("Added button handlers and announcer to confirmPurchase");
                 }
                 if (__instance.confirmSell != null)
                 {
                     AddGenericButtonHandlers(__instance.confirmSell);
-                    MelonLogger.Msg("Added button handlers to org confirmSell");
+                    AddDialogAnnouncer(__instance.confirmSell, "Sell Confirmation");
+                    MelonLogger.Msg("Added button handlers and announcer to confirmSell");
+                }
+
+                // Add hover handler to spendXPButton
+                if (__instance.spendXPButton != null)
+                {
+                    AddButtonHoverHandler(__instance.spendXPButton, "Spend XP");
+                }
+
+                // Check for XP spending panel (the augmentation selection panel)
+                if (__instance.spendXPPanel != null)
+                {
+                    AddGenericButtonHandlers(__instance.spendXPPanel);
+                    AddDialogAnnouncer(__instance.spendXPPanel, "Spend XP - Select Augmentation");
+                }
+
+                // Check for XP spending confirmation
+                if (__instance.confirmSpendXPSelectionPanel != null)
+                {
+                    AddGenericButtonHandlers(__instance.confirmSpendXPSelectionPanel);
+                    AddDialogAnnouncer(__instance.confirmSpendXPSelectionPanel, "Spend XP Confirmation");
                 }
             }
             catch (Exception ex)
@@ -148,7 +294,8 @@ namespace TISpeech.Patches
                 if (__instance.confirmPanel != null)
                 {
                     AddGenericButtonHandlers(__instance.confirmPanel);
-                    MelonLogger.Msg("Added button handlers to OperationCanvasController confirmation dialogs");
+                    AddDialogAnnouncer(__instance.confirmPanel, "Operation Confirmation");
+                    MelonLogger.Msg("Added button handlers and announcer to operation confirmation");
                 }
             }
             catch (Exception ex)
@@ -174,7 +321,16 @@ namespace TISpeech.Patches
                 if (__instance.singleAlertBox != null)
                 {
                     AddGenericButtonHandlers(__instance.singleAlertBox);
-                    MelonLogger.Msg("Added button handlers to NotificationScreenController alert dialogs");
+                    AddDialogAnnouncer(__instance.singleAlertBox, "Alert");
+                    MelonLogger.Msg("Added button handlers and announcer to alert dialog");
+                }
+
+                // Also handle the confirm panel
+                if (__instance.confirmPanelObject != null)
+                {
+                    AddGenericButtonHandlers(__instance.confirmPanelObject);
+                    AddDialogAnnouncer(__instance.confirmPanelObject, "Notification Confirmation");
+                    MelonLogger.Msg("Added button handlers and announcer to notification confirm panel");
                 }
             }
             catch (Exception ex)
@@ -197,8 +353,15 @@ namespace TISpeech.Patches
                     return;
 
                 // Add handlers to all buttons in the mission canvas
-                // Mission canvas has various confirmation dialogs
                 AddGenericButtonHandlers(__instance.gameObject);
+
+                // Add dialog announcer to the abort confirmation UI
+                if (__instance.abortConfirmUI != null)
+                {
+                    AddDialogAnnouncer(__instance.abortConfirmUI, "Abort Mission Confirmation");
+                    MelonLogger.Msg("Added announcer to mission abort confirmation");
+                }
+
                 MelonLogger.Msg("Added button handlers to CouncilorMissionCanvasController dialogs");
             }
             catch (Exception ex)
@@ -265,6 +428,73 @@ namespace TISpeech.Patches
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error adding generic button handlers: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Add DialogAnnouncer component to a dialog GameObject to announce when it becomes active
+        /// </summary>
+        private static void AddDialogAnnouncer(GameObject dialog, string dialogName)
+        {
+            try
+            {
+                if (dialog == null)
+                    return;
+
+                // Check if we already added an announcer
+                var existingAnnouncer = dialog.GetComponent<DialogAnnouncer>();
+                if (existingAnnouncer != null)
+                    return; // Already has announcer
+
+                // Add the announcer component
+                var announcer = dialog.AddComponent<DialogAnnouncer>();
+                announcer.dialogName = dialogName;
+                announcer.announceOnEnable = true;
+                announcer.focusFirstButton = true;
+
+                MelonLogger.Msg($"Added DialogAnnouncer to: {dialogName}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error adding DialogAnnouncer to {dialogName}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Add a hover handler directly to a specific button
+        /// </summary>
+        private static void AddButtonHoverHandler(Button button, string label)
+        {
+            if (button == null) return;
+
+            try
+            {
+                EventTrigger trigger = button.gameObject.GetComponent<EventTrigger>();
+                if (trigger == null)
+                    trigger = button.gameObject.AddComponent<EventTrigger>();
+                else
+                    trigger.triggers.Clear();
+
+                EventTrigger.Entry entry = new EventTrigger.Entry();
+                entry.eventID = EventTriggerType.PointerEnter;
+                entry.callback.AddListener((data) =>
+                {
+                    if (button.interactable)
+                    {
+                        AnnounceControl($"Button: {label}");
+                    }
+                    else
+                    {
+                        AnnounceControl($"Button: {label} (disabled)");
+                    }
+                });
+                trigger.triggers.Add(entry);
+
+                MelonLogger.Msg($"Added direct hover handler to button: {label}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error adding button hover handler for {label}: {ex.Message}");
             }
         }
 
