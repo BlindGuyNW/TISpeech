@@ -38,6 +38,10 @@
       <HintPath>$(ManagedDir)\Assembly-CSharp-firstpass.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="OSA.Core">
+      <HintPath>$(ManagedDir)\OSA.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Unity Engine References -->

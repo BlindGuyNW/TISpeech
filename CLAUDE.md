@@ -355,3 +355,22 @@ The .csproj references game DLLs in specific locations:
    - `GameObject.SetActive` - Called thousands of times per second, creates massive performance hit
 
    **Solution:** Use the **Confirmation Dialog Pattern** documented above - patch controller `Initialize()` methods instead. This is game-specific, reliable, and has zero performance impact.
+
+8. **DO NOT add EventTrigger to children of clickable buttons** - Unity's `EventTrigger` component implements ALL pointer interfaces (`IPointerClickHandler`, `IPointerEnterHandler`, etc.) **regardless of which triggers you've registered**. When you add an EventTrigger to a text child of a Button:
+   - User clicks on the text child
+   - EventSystem sees the text has `IPointerClickHandler` (via EventTrigger)
+   - EventTrigger receives the click but does nothing (no click trigger registered)
+   - **The event stops there** - it doesn't propagate to the parent Button
+   - The button's `onClick` never fires
+
+   **Solution:** Add the EventTrigger to the **same GameObject as the Button**, not to child elements like text labels. When both components are on the same object, they both receive pointer events. Example:
+
+   ```csharp
+   // WRONG - blocks clicks:
+   AddEventTrigger(button.GetComponentInChildren<TMP_Text>().gameObject);
+
+   // CORRECT - both Button and EventTrigger receive events:
+   AddEventTrigger(button.gameObject);
+   ```
+
+   For tabs that use `TabbedPaneController`, access the button via `tabbedPane.TabButton` instead of adding handlers to tab text labels.

@@ -86,7 +86,9 @@ namespace TISpeech.Patches
                 }
                 else
                 {
-                    trigger.triggers.Clear();
+                    // Only remove existing PointerEnter triggers to avoid duplicates
+                    // Don't clear all triggers - game may have click handlers we need to preserve
+                    trigger.triggers.RemoveAll(t => t.eventID == EventTriggerType.PointerEnter);
                 }
 
                 EventTrigger.Entry entry = new EventTrigger.Entry();
@@ -117,7 +119,9 @@ namespace TISpeech.Patches
                 }
                 else
                 {
-                    trigger.triggers.Clear();
+                    // Only remove existing PointerEnter triggers to avoid duplicates
+                    // Don't clear all triggers - game may have click handlers we need to preserve
+                    trigger.triggers.RemoveAll(t => t.eventID == EventTriggerType.PointerEnter);
                 }
 
                 EventTrigger.Entry entry = new EventTrigger.Entry();

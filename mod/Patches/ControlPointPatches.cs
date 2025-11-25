@@ -78,7 +78,9 @@ namespace TISpeech.Patches
                 }
                 else
                 {
-                    trigger.triggers.Clear();
+                    // Only remove existing PointerEnter triggers to avoid duplicates
+                    // Don't clear all triggers - game may have click handlers we need to preserve
+                    trigger.triggers.RemoveAll(t => t.eventID == EventTriggerType.PointerEnter);
                 }
 
                 // Capture variables for the closure
@@ -142,7 +144,9 @@ namespace TISpeech.Patches
                 }
                 else
                 {
-                    trigger.triggers.Clear();
+                    // Only remove existing PointerEnter triggers to avoid duplicates
+                    // Don't clear all triggers - game may have click handlers we need to preserve
+                    trigger.triggers.RemoveAll(t => t.eventID == EventTriggerType.PointerEnter);
                 }
 
                 string capturedCpName = cpName;
@@ -208,7 +212,9 @@ namespace TISpeech.Patches
                 }
                 else
                 {
-                    trigger.triggers.Clear();
+                    // Only remove existing PointerEnter triggers to avoid duplicates
+                    // Don't clear all triggers - game may have click handlers we need to preserve
+                    trigger.triggers.RemoveAll(t => t.eventID == EventTriggerType.PointerEnter);
                 }
 
                 string capturedCpName = cpName;
