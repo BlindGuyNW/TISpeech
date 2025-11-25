@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MelonLoader;
+using PavonisInteractive.TerraInvicta;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -11,23 +12,52 @@ namespace TISpeech
 {
     /// <summary>
     /// Keyboard-driven slot cursor navigation system for accessibility
-    /// Allows navigating UI elements using the numeric keypad without mouse movement
+    /// Supports hierarchical navigation with drill-down into containers
+    ///
+    /// Controls:
+    /// - Numpad 0: Toggle cursor on/off
+    /// - Numpad 8: Move to previous element/container
+    /// - Numpad 2: Move to next element/container
+    /// - Numpad 6 (or +): Drill down into container
+    /// - Numpad 4 (or -): Go back up to container level
+    /// - Numpad 5 or Numpad Enter: Activate current element
+    /// - Numpad Period: Read current element details
     /// </summary>
     public class SlotCursor
     {
+        // Navigation levels
+        private const int LEVEL_CONTAINERS = 1;
+        private const int LEVEL_CHILDREN = 2;
+
         // Cursor state
         private bool isActive = false;
-        private int focusIndex = -1;
-        private List<GameObject> currentElements = new List<GameObject>();
+        private int currentLevel = LEVEL_CONTAINERS;
         private Canvas activeCanvas = null;
+
+        // Container-level navigation
+        private List<GameObject> containers = new List<GameObject>();
+        private int containerIndex = 0;
+
+        // Child-level navigation (when drilled into a container)
+        private List<GameObject> currentChildren = new List<GameObject>();
+        private int childIndex = 0;
+
+        // Flat element list (fallback when no containers found)
+        private List<GameObject> flatElements = new List<GameObject>();
+        private int flatIndex = 0;
+        private bool usingFlatMode = false;
 
         // Key state tracking to prevent repeat firing
         private bool numpad0Pressed = false;
         private bool numpad2Pressed = false;
         private bool numpad8Pressed = false;
+        private bool numpad4Pressed = false;
+        private bool numpad6Pressed = false;
         private bool numpad5Pressed = false;
         private bool numpadEnterPressed = false;
         private bool numpadPeriodPressed = false;
+        private bool numpadPlusPressed = false;
+        private bool numpadMinusPressed = false;
 
         // Debounce for vocalization
         private string lastAnnouncement = "";
@@ -36,7 +66,6 @@ namespace TISpeech
 
         /// <summary>
         /// Update cursor state and handle input each frame
-        /// Call this from MelonMod.OnUpdate()
         /// </summary>
         public void Update()
         {
@@ -47,7 +76,6 @@ namespace TISpeech
 
                 HandleInput();
 
-                // Refresh elements if cursor is active and canvas changed
                 if (isActive)
                 {
                     RefreshIfNeeded();
@@ -78,11 +106,10 @@ namespace TISpeech
                 numpad0Pressed = false;
             }
 
-            // Only process other inputs if cursor is active
             if (!isActive)
                 return;
 
-            // Numpad 2 - Move to next element (down)
+            // Numpad 2 - Move to next element
             if (Input.GetKeyDown(KeyCode.Keypad2))
             {
                 if (!numpad2Pressed)
@@ -96,7 +123,7 @@ namespace TISpeech
                 numpad2Pressed = false;
             }
 
-            // Numpad 8 - Move to previous element (up)
+            // Numpad 8 - Move to previous element
             if (Input.GetKeyDown(KeyCode.Keypad8))
             {
                 if (!numpad8Pressed)
@@ -108,6 +135,40 @@ namespace TISpeech
             else if (!Input.GetKey(KeyCode.Keypad8))
             {
                 numpad8Pressed = false;
+            }
+
+            // Numpad 6 or Numpad Plus - Drill down into container
+            bool drillDownPressed = Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.KeypadPlus);
+            if (drillDownPressed)
+            {
+                if (!numpad6Pressed && !numpadPlusPressed)
+                {
+                    numpad6Pressed = true;
+                    numpadPlusPressed = true;
+                    DrillDown();
+                }
+            }
+            else
+            {
+                if (!Input.GetKey(KeyCode.Keypad6)) numpad6Pressed = false;
+                if (!Input.GetKey(KeyCode.KeypadPlus)) numpadPlusPressed = false;
+            }
+
+            // Numpad 4 or Numpad Minus - Go back up
+            bool drillUpPressed = Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.KeypadMinus);
+            if (drillUpPressed)
+            {
+                if (!numpad4Pressed && !numpadMinusPressed)
+                {
+                    numpad4Pressed = true;
+                    numpadMinusPressed = true;
+                    DrillUp();
+                }
+            }
+            else
+            {
+                if (!Input.GetKey(KeyCode.Keypad4)) numpad4Pressed = false;
+                if (!Input.GetKey(KeyCode.KeypadMinus)) numpadMinusPressed = false;
             }
 
             // Numpad 5 - Activate current element
@@ -153,6 +214,8 @@ namespace TISpeech
             }
         }
 
+        #region Cursor Toggle and Refresh
+
         /// <summary>
         /// Toggle the slot cursor on or off
         /// </summary>
@@ -162,29 +225,59 @@ namespace TISpeech
 
             if (isActive)
             {
-                // Cursor activated - discover elements on active canvas
                 RefreshElements();
 
-                if (currentElements.Count > 0)
+                if (usingFlatMode)
                 {
-                    focusIndex = 0;
-                    TISpeechMod.Speak($"Slot cursor activated. {currentElements.Count} elements found.", interrupt: true);
-                    AnnounceCurrent();
+                    if (flatElements.Count > 0)
+                    {
+                        flatIndex = 0;
+                        TISpeechMod.Speak($"Slot cursor activated. {flatElements.Count} elements found.", interrupt: true);
+                        AnnounceCurrent();
+                    }
+                    else
+                    {
+                        TISpeechMod.Speak("Slot cursor activated, but no navigable elements found.", interrupt: true);
+                        isActive = false;
+                    }
                 }
                 else
                 {
-                    TISpeechMod.Speak("Slot cursor activated, but no navigable elements found on this screen.", interrupt: true);
-                    isActive = false; // Deactivate if nothing to navigate
+                    if (containers.Count > 0)
+                    {
+                        containerIndex = 0;
+                        currentLevel = LEVEL_CONTAINERS;
+                        TISpeechMod.Speak($"Slot cursor activated. {containers.Count} containers found. Use numpad 6 to drill down.", interrupt: true);
+                        AnnounceCurrent();
+                    }
+                    else
+                    {
+                        TISpeechMod.Speak("Slot cursor activated, but no containers found.", interrupt: true);
+                        isActive = false;
+                    }
                 }
             }
             else
             {
-                // Cursor deactivated
                 TISpeechMod.Speak("Slot cursor deactivated", interrupt: true);
-                focusIndex = -1;
-                currentElements.Clear();
-                activeCanvas = null;
+                ResetState();
             }
+        }
+
+        /// <summary>
+        /// Reset all navigation state
+        /// </summary>
+        private void ResetState()
+        {
+            containerIndex = 0;
+            childIndex = 0;
+            flatIndex = 0;
+            currentLevel = LEVEL_CONTAINERS;
+            containers.Clear();
+            currentChildren.Clear();
+            flatElements.Clear();
+            activeCanvas = null;
+            usingFlatMode = false;
         }
 
         /// <summary>
@@ -193,20 +286,19 @@ namespace TISpeech
         private void RefreshIfNeeded()
         {
             Canvas current = GetActiveCanvas();
-
             if (current != activeCanvas)
             {
-                MelonLogger.Msg($"Canvas changed, refreshing elements. Old: {activeCanvas?.name ?? "null"}, New: {current?.name ?? "null"}");
+                MelonLogger.Msg($"Canvas changed, refreshing. Old: {activeCanvas?.name ?? "null"}, New: {current?.name ?? "null"}");
                 RefreshElements();
             }
         }
 
         /// <summary>
-        /// Refresh the list of navigable elements
+        /// Refresh containers and elements for the current screen
         /// </summary>
         private void RefreshElements()
         {
-            currentElements.Clear();
+            ResetState();
             activeCanvas = GetActiveCanvas();
 
             if (activeCanvas == null)
@@ -217,91 +309,116 @@ namespace TISpeech
 
             MelonLogger.Msg($"Discovering elements on canvas: {activeCanvas.name}");
 
-            // Discover navigable elements
-            currentElements = DiscoverNavigableElements(activeCanvas);
+            // Try to discover containers first
+            containers = DiscoverContainers(activeCanvas);
+            containers = SortElementsByPosition(containers);
 
-            // Sort elements by position (top-to-bottom, left-to-right)
-            currentElements = SortElementsByPosition(currentElements);
-
-            MelonLogger.Msg($"Found {currentElements.Count} navigable elements");
-
-            // Clamp focus index to valid range
-            if (focusIndex >= currentElements.Count)
-                focusIndex = currentElements.Count - 1;
-            if (focusIndex < 0 && currentElements.Count > 0)
-                focusIndex = 0;
+            if (containers.Count > 0)
+            {
+                usingFlatMode = false;
+                MelonLogger.Msg($"Found {containers.Count} containers (hierarchical mode)");
+            }
+            else
+            {
+                // Fallback to flat mode
+                usingFlatMode = true;
+                flatElements = DiscoverAllElements(activeCanvas);
+                flatElements = SortElementsByPosition(flatElements);
+                MelonLogger.Msg($"No containers found, using flat mode with {flatElements.Count} elements");
+            }
         }
 
+        #endregion
+
+        #region Container Discovery
+
         /// <summary>
-        /// Get the currently active canvas using the game's CanvasManager
-        /// The game tracks which info screen (Research, Council, etc.) is active
+        /// Discover containers on the current screen
         /// </summary>
-        private Canvas GetActiveCanvas()
+        private List<GameObject> DiscoverContainers(Canvas rootCanvas)
         {
-            try
+            var result = new List<GameObject>();
+
+            // Check for Council screen containers (CouncilorGridItemController)
+            var councilorItems = rootCanvas.GetComponentsInChildren<CouncilorGridItemController>(false);
+            foreach (var item in councilorItems)
             {
-                // Use the game's canvas management system to get the active info screen
-                // GameControl is in the global namespace (not under PavonisInteractive.TerraInvicta)
-                var canvasManager = GameControl.canvasStack;
-                if (canvasManager == null)
+                if (item != null && item.gameObject.activeInHierarchy && IsElementVisible(item.gameObject))
                 {
-                    MelonLogger.Warning("CanvasManager not available");
-                    return null;
+                    result.Add(item.gameObject);
+                    MelonLogger.Msg($"  Found councilor container: {item.councilorName?.text ?? item.gameObject.name}");
                 }
-
-                var activeScreen = canvasManager.ActiveInfoScreen;
-                if (activeScreen == null)
-                {
-                    // No logging - this is normal when in game world or main menu
-                    return null;
-                }
-
-                // Get the canvas from the active screen
-                Canvas canvas = activeScreen.Canvas;
-                if (canvas == null)
-                {
-                    MelonLogger.Warning($"Active info screen has no Canvas component: {activeScreen.GetType().Name}");
-                }
-
-                return canvas;
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"Error getting active canvas: {ex.Message}");
-                return null;
-            }
+
+            // TODO: Add other container types here
+            // - ResearchSlotController for Research screen
+            // - IntelFactionGridItemController for Intel screen
+            // - etc.
+
+            return result;
         }
 
         /// <summary>
-        /// Discover all navigable elements on the given canvas, including sub-canvases
+        /// Discover children within a container
         /// </summary>
-        private List<GameObject> DiscoverNavigableElements(Canvas rootCanvas)
+        private List<GameObject> DiscoverContainerChildren(GameObject container)
+        {
+            var children = new List<GameObject>();
+            var seen = new HashSet<GameObject>();
+
+            // Find EventTriggers within this container
+            foreach (var trigger in container.GetComponentsInChildren<EventTrigger>(false))
+            {
+                if (IsElementVisible(trigger.gameObject) && !seen.Contains(trigger.gameObject))
+                {
+                    children.Add(trigger.gameObject);
+                    seen.Add(trigger.gameObject);
+                }
+            }
+
+            // Find Buttons within this container
+            foreach (var button in container.GetComponentsInChildren<Button>(false))
+            {
+                if (button.interactable && IsElementVisible(button.gameObject) && !seen.Contains(button.gameObject))
+                {
+                    children.Add(button.gameObject);
+                    seen.Add(button.gameObject);
+                }
+            }
+
+            // Find Toggles within this container
+            foreach (var toggle in container.GetComponentsInChildren<Toggle>(false))
+            {
+                if (toggle.interactable && IsElementVisible(toggle.gameObject) && !seen.Contains(toggle.gameObject))
+                {
+                    children.Add(toggle.gameObject);
+                    seen.Add(toggle.gameObject);
+                }
+            }
+
+            return SortElementsByPosition(children);
+        }
+
+        /// <summary>
+        /// Discover all navigable elements (flat mode fallback)
+        /// </summary>
+        private List<GameObject> DiscoverAllElements(Canvas rootCanvas)
         {
             var elements = new List<GameObject>();
             var seen = new HashSet<GameObject>();
 
-            // Terra Invicta uses nested sub-canvases (e.g., primaryResearchPanel, councilGridCanvas)
-            // We need to search the root canvas AND all child canvas components
-            List<Canvas> canvasesToSearch = new List<Canvas>();
-            canvasesToSearch.Add(rootCanvas);
-
-            // Find all child Canvas components (sub-canvases for different panels)
+            List<Canvas> canvasesToSearch = new List<Canvas> { rootCanvas };
             Canvas[] childCanvases = rootCanvas.GetComponentsInChildren<Canvas>(false);
             foreach (var childCanvas in childCanvases)
             {
                 if (childCanvas != rootCanvas && childCanvas.enabled && childCanvas.gameObject.activeInHierarchy)
                 {
                     canvasesToSearch.Add(childCanvas);
-                    MelonLogger.Msg($"  Found sub-canvas: {childCanvas.name}, enabled: {childCanvas.enabled}");
                 }
             }
 
-            MelonLogger.Msg($"Searching {canvasesToSearch.Count} canvases total (1 root + {canvasesToSearch.Count - 1} sub-canvases)");
-
-            // Search each canvas for navigable elements
             foreach (var canvas in canvasesToSearch)
             {
-                // Find all EventTriggers we've added for accessibility
                 foreach (var trigger in canvas.GetComponentsInChildren<EventTrigger>(false))
                 {
                     if (IsElementVisible(trigger.gameObject) && !seen.Contains(trigger.gameObject))
@@ -311,7 +428,6 @@ namespace TISpeech
                     }
                 }
 
-                // Find all native Unity UI buttons
                 foreach (var button in canvas.GetComponentsInChildren<Button>(false))
                 {
                     if (button.interactable && IsElementVisible(button.gameObject) && !seen.Contains(button.gameObject))
@@ -321,7 +437,6 @@ namespace TISpeech
                     }
                 }
 
-                // Find all toggles
                 foreach (var toggle in canvas.GetComponentsInChildren<Toggle>(false))
                 {
                     if (toggle.interactable && IsElementVisible(toggle.gameObject) && !seen.Contains(toggle.gameObject))
@@ -335,39 +450,459 @@ namespace TISpeech
             return elements;
         }
 
+        #endregion
+
+        #region Navigation
+
         /// <summary>
-        /// Check if a UI element is actually visible using Unity's visibility system
-        /// Checks: activeInHierarchy, parent Canvas enabled, and CanvasGroup alpha/interactable
+        /// Move to next element (behavior depends on current level)
+        /// </summary>
+        private void MoveNext()
+        {
+            if (usingFlatMode)
+            {
+                MoveFlatNext();
+                return;
+            }
+
+            if (currentLevel == LEVEL_CONTAINERS)
+            {
+                MoveNextContainer();
+            }
+            else // LEVEL_CHILDREN
+            {
+                MoveNextChild();
+            }
+        }
+
+        /// <summary>
+        /// Move to previous element (behavior depends on current level)
+        /// </summary>
+        private void MovePrevious()
+        {
+            if (usingFlatMode)
+            {
+                MoveFlatPrevious();
+                return;
+            }
+
+            if (currentLevel == LEVEL_CONTAINERS)
+            {
+                MovePreviousContainer();
+            }
+            else // LEVEL_CHILDREN
+            {
+                MovePreviousChild();
+            }
+        }
+
+        /// <summary>
+        /// Move to next container
+        /// </summary>
+        private void MoveNextContainer()
+        {
+            if (containers.Count == 0) return;
+            containerIndex = (containerIndex + 1) % containers.Count;
+            AnnounceCurrent();
+        }
+
+        /// <summary>
+        /// Move to previous container
+        /// </summary>
+        private void MovePreviousContainer()
+        {
+            if (containers.Count == 0) return;
+            containerIndex--;
+            if (containerIndex < 0) containerIndex = containers.Count - 1;
+            AnnounceCurrent();
+        }
+
+        /// <summary>
+        /// Move to next child, auto-advancing to next container at boundary
+        /// </summary>
+        private void MoveNextChild()
+        {
+            if (currentChildren.Count == 0) return;
+
+            childIndex++;
+            if (childIndex >= currentChildren.Count)
+            {
+                // Auto-advance to next container
+                containerIndex++;
+                if (containerIndex >= containers.Count)
+                {
+                    containerIndex = 0;
+                }
+
+                // Drill into the new container
+                currentChildren = DiscoverContainerChildren(containers[containerIndex]);
+                childIndex = 0;
+
+                if (currentChildren.Count == 0)
+                {
+                    // No children in this container, announce container instead
+                    currentLevel = LEVEL_CONTAINERS;
+                    TISpeechMod.Speak("No elements in this container", interrupt: true);
+                    AnnounceCurrent();
+                    return;
+                }
+
+                // Announce we moved to a new container
+                string containerName = GetContainerName(containers[containerIndex]);
+                TISpeechMod.Speak($"Moved to {containerName}", interrupt: true);
+            }
+
+            AnnounceCurrent();
+        }
+
+        /// <summary>
+        /// Move to previous child, auto-advancing to previous container at boundary
+        /// </summary>
+        private void MovePreviousChild()
+        {
+            if (currentChildren.Count == 0) return;
+
+            childIndex--;
+            if (childIndex < 0)
+            {
+                // Auto-advance to previous container
+                containerIndex--;
+                if (containerIndex < 0)
+                {
+                    containerIndex = containers.Count - 1;
+                }
+
+                // Drill into the new container
+                currentChildren = DiscoverContainerChildren(containers[containerIndex]);
+                childIndex = currentChildren.Count - 1;
+
+                if (currentChildren.Count == 0 || childIndex < 0)
+                {
+                    childIndex = 0;
+                    currentLevel = LEVEL_CONTAINERS;
+                    TISpeechMod.Speak("No elements in this container", interrupt: true);
+                    AnnounceCurrent();
+                    return;
+                }
+
+                // Announce we moved to a new container
+                string containerName = GetContainerName(containers[containerIndex]);
+                TISpeechMod.Speak($"Moved to {containerName}", interrupt: true);
+            }
+
+            AnnounceCurrent();
+        }
+
+        /// <summary>
+        /// Flat mode: move to next element
+        /// </summary>
+        private void MoveFlatNext()
+        {
+            if (flatElements.Count == 0) return;
+            flatIndex = (flatIndex + 1) % flatElements.Count;
+            AnnounceCurrent();
+        }
+
+        /// <summary>
+        /// Flat mode: move to previous element
+        /// </summary>
+        private void MoveFlatPrevious()
+        {
+            if (flatElements.Count == 0) return;
+            flatIndex--;
+            if (flatIndex < 0) flatIndex = flatElements.Count - 1;
+            AnnounceCurrent();
+        }
+
+        /// <summary>
+        /// Drill down into the current container
+        /// </summary>
+        private void DrillDown()
+        {
+            if (usingFlatMode)
+            {
+                TISpeechMod.Speak("Flat mode, cannot drill down", interrupt: true);
+                return;
+            }
+
+            if (currentLevel == LEVEL_CHILDREN)
+            {
+                TISpeechMod.Speak("Already at detail level", interrupt: true);
+                return;
+            }
+
+            if (containers.Count == 0 || containerIndex >= containers.Count)
+            {
+                TISpeechMod.Speak("No container to drill into", interrupt: true);
+                return;
+            }
+
+            // Discover children in current container
+            currentChildren = DiscoverContainerChildren(containers[containerIndex]);
+
+            if (currentChildren.Count == 0)
+            {
+                TISpeechMod.Speak("No elements in this container", interrupt: true);
+                return;
+            }
+
+            currentLevel = LEVEL_CHILDREN;
+            childIndex = 0;
+
+            string containerName = GetContainerName(containers[containerIndex]);
+            TISpeechMod.Speak($"Entering {containerName}, {currentChildren.Count} elements", interrupt: true);
+            AnnounceCurrent();
+        }
+
+        /// <summary>
+        /// Go back up to container level
+        /// </summary>
+        private void DrillUp()
+        {
+            if (usingFlatMode)
+            {
+                TISpeechMod.Speak("Flat mode, cannot go up", interrupt: true);
+                return;
+            }
+
+            if (currentLevel == LEVEL_CONTAINERS)
+            {
+                TISpeechMod.Speak("Already at container level", interrupt: true);
+                return;
+            }
+
+            currentLevel = LEVEL_CONTAINERS;
+            currentChildren.Clear();
+            childIndex = 0;
+
+            TISpeechMod.Speak("Back to container level", interrupt: true);
+            AnnounceCurrent();
+        }
+
+        #endregion
+
+        #region Activation
+
+        /// <summary>
+        /// Activate the currently focused element
+        /// </summary>
+        private void ActivateCurrent()
+        {
+            GameObject current = GetCurrentElement();
+            if (current == null)
+            {
+                TISpeechMod.Speak("No element focused", interrupt: true);
+                return;
+            }
+
+            // Try Button
+            Button button = current.GetComponent<Button>();
+            if (button != null && button.interactable)
+            {
+                MelonLogger.Msg($"Activating button: {current.name}");
+                TISpeechMod.Speak("Activated", interrupt: false);
+                button.onClick.Invoke();
+                return;
+            }
+
+            // Try Toggle
+            Toggle toggle = current.GetComponent<Toggle>();
+            if (toggle != null && toggle.interactable)
+            {
+                MelonLogger.Msg($"Toggling: {current.name}");
+                toggle.isOn = !toggle.isOn;
+                TISpeechMod.Speak($"Toggled {(toggle.isOn ? "on" : "off")}", interrupt: false);
+                return;
+            }
+
+            // Try EventTrigger (simulate click)
+            EventTrigger eventTrigger = current.GetComponent<EventTrigger>();
+            if (eventTrigger != null)
+            {
+                MelonLogger.Msg($"Simulating click on: {current.name}");
+                SimulatePointerClick(current);
+                TISpeechMod.Speak("Selected", interrupt: false);
+                return;
+            }
+
+            TISpeechMod.Speak("Element cannot be activated", interrupt: false);
+        }
+
+        #endregion
+
+        #region Announcements
+
+        /// <summary>
+        /// Announce the currently focused element
+        /// </summary>
+        private void AnnounceCurrent()
+        {
+            GameObject current = GetCurrentElement();
+            if (current == null) return;
+
+            // Debounce
+            float currentTime = Time.unscaledTime;
+            string elementId = current.GetInstanceID().ToString();
+            if (elementId == lastAnnouncement && (currentTime - lastAnnouncementTime) < ANNOUNCEMENT_DEBOUNCE_TIME)
+                return;
+
+            lastAnnouncement = elementId;
+            lastAnnouncementTime = currentTime;
+
+            // Build position announcement
+            string position;
+            if (usingFlatMode)
+            {
+                position = $"{flatIndex + 1} of {flatElements.Count}";
+            }
+            else if (currentLevel == LEVEL_CONTAINERS)
+            {
+                string containerName = GetContainerName(current);
+                position = $"{containerIndex + 1} of {containers.Count}: {containerName}";
+            }
+            else
+            {
+                position = $"{childIndex + 1} of {currentChildren.Count}";
+            }
+
+            TISpeechMod.Speak(position, interrupt: true);
+
+            // Trigger hover event to fire our existing accessibility patches
+            SimulatePointerEnter(current);
+
+            MelonLogger.Msg($"Focused: {current.name} ({position})");
+        }
+
+        /// <summary>
+        /// Read detailed information about current element
+        /// </summary>
+        private void ReadCurrentDetails()
+        {
+            GameObject current = GetCurrentElement();
+            if (current == null)
+            {
+                TISpeechMod.Speak("No element focused", interrupt: true);
+                return;
+            }
+
+            string details = GetElementDetails(current);
+            TISpeechMod.Speak(details, interrupt: true);
+        }
+
+        /// <summary>
+        /// Get the currently focused element based on mode and level
+        /// </summary>
+        private GameObject GetCurrentElement()
+        {
+            if (usingFlatMode)
+            {
+                if (flatIndex >= 0 && flatIndex < flatElements.Count)
+                    return flatElements[flatIndex];
+            }
+            else if (currentLevel == LEVEL_CONTAINERS)
+            {
+                if (containerIndex >= 0 && containerIndex < containers.Count)
+                    return containers[containerIndex];
+            }
+            else // LEVEL_CHILDREN
+            {
+                if (childIndex >= 0 && childIndex < currentChildren.Count)
+                    return currentChildren[childIndex];
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Get a descriptive name for a container
+        /// </summary>
+        private string GetContainerName(GameObject container)
+        {
+            // Check for CouncilorGridItemController
+            var councilor = container.GetComponent<CouncilorGridItemController>();
+            if (councilor != null && councilor.councilorName != null)
+            {
+                string name = TISpeechMod.CleanText(councilor.councilorName.text);
+                if (!string.IsNullOrWhiteSpace(name))
+                    return name;
+            }
+
+            // TODO: Add other container types here
+
+            // Fallback to GameObject name
+            return container.name;
+        }
+
+        /// <summary>
+        /// Get detailed description of an element
+        /// </summary>
+        private string GetElementDetails(GameObject element)
+        {
+            var details = new System.Text.StringBuilder();
+            details.Append($"Element: {element.name}. ");
+
+            var components = new List<string>();
+            if (element.GetComponent<Button>() != null) components.Add("Button");
+            if (element.GetComponent<Toggle>() != null) components.Add("Toggle");
+            if (element.GetComponent<EventTrigger>() != null) components.Add("EventTrigger");
+            if (element.GetComponent<TMP_Text>() != null) components.Add("Text");
+
+            if (components.Count > 0)
+                details.Append($"Type: {string.Join(", ", components)}. ");
+
+            if (element.transform.parent != null)
+                details.Append($"Parent: {element.transform.parent.name}. ");
+
+            return details.ToString();
+        }
+
+        #endregion
+
+        #region Helpers
+
+        /// <summary>
+        /// Get the active canvas using game's canvas management
+        /// </summary>
+        private Canvas GetActiveCanvas()
+        {
+            try
+            {
+                var canvasManager = GameControl.canvasStack;
+                if (canvasManager == null) return null;
+
+                var activeScreen = canvasManager.ActiveInfoScreen;
+                if (activeScreen == null) return null;
+
+                return activeScreen.Canvas;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error getting active canvas: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Check if a UI element is visible
         /// </summary>
         private bool IsElementVisible(GameObject element)
         {
-            // Must be active in the hierarchy (element and all parents active)
             if (!element.activeInHierarchy)
                 return false;
 
-            // Check if any parent Canvas is disabled
-            // Terra Invicta uses Canvas.enabled to hide entire panels
             Canvas parentCanvas = element.GetComponentInParent<Canvas>();
             while (parentCanvas != null)
             {
                 if (!parentCanvas.enabled)
                     return false;
-
-                // Move up to check parent canvases
                 Transform parent = parentCanvas.transform.parent;
                 parentCanvas = parent != null ? parent.GetComponentInParent<Canvas>() : null;
             }
 
-            // Check CanvasGroup (if present) - used for alpha-based hiding and interactability
             CanvasGroup canvasGroup = element.GetComponentInParent<CanvasGroup>();
             if (canvasGroup != null)
             {
-                // Alpha of 0 means invisible
-                if (canvasGroup.alpha <= 0f)
-                    return false;
-
-                // If not interactable, skip it (likely a disabled section)
-                if (!canvasGroup.interactable)
+                if (canvasGroup.alpha <= 0f || !canvasGroup.interactable)
                     return false;
             }
 
@@ -385,8 +920,6 @@ namespace TISpeech
                 if (rectTransform != null)
                 {
                     Vector3 worldPos = rectTransform.position;
-                    // Use negative Y for top-to-bottom, then X for left-to-right
-                    // Multiply Y by large factor to prioritize vertical position
                     return -worldPos.y * 10000 + worldPos.x;
                 }
                 return 0f;
@@ -394,86 +927,16 @@ namespace TISpeech
         }
 
         /// <summary>
-        /// Move focus to the next element
+        /// Simulate pointer enter event
         /// </summary>
-        private void MoveNext()
+        private void SimulatePointerEnter(GameObject target)
         {
-            if (currentElements.Count == 0)
-            {
-                TISpeechMod.Speak("No elements to navigate", interrupt: true);
-                return;
-            }
-
-            focusIndex = (focusIndex + 1) % currentElements.Count;
-            AnnounceCurrent();
+            var eventData = new PointerEventData(EventSystem.current) { position = Vector2.zero };
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.pointerEnterHandler);
         }
 
         /// <summary>
-        /// Move focus to the previous element
-        /// </summary>
-        private void MovePrevious()
-        {
-            if (currentElements.Count == 0)
-            {
-                TISpeechMod.Speak("No elements to navigate", interrupt: true);
-                return;
-            }
-
-            focusIndex--;
-            if (focusIndex < 0)
-                focusIndex = currentElements.Count - 1;
-
-            AnnounceCurrent();
-        }
-
-        /// <summary>
-        /// Activate the currently focused element (simulate click)
-        /// </summary>
-        private void ActivateCurrent()
-        {
-            if (focusIndex < 0 || focusIndex >= currentElements.Count)
-            {
-                TISpeechMod.Speak("No element focused", interrupt: true);
-                return;
-            }
-
-            GameObject current = currentElements[focusIndex];
-
-            // Try to activate as a Button
-            Button button = current.GetComponent<Button>();
-            if (button != null && button.interactable)
-            {
-                MelonLogger.Msg($"Activating button: {current.name}");
-                TISpeechMod.Speak("Activated", interrupt: false);
-                button.onClick.Invoke();
-                return;
-            }
-
-            // Try to activate as a Toggle
-            Toggle toggle = current.GetComponent<Toggle>();
-            if (toggle != null && toggle.interactable)
-            {
-                MelonLogger.Msg($"Toggling: {current.name}");
-                toggle.isOn = !toggle.isOn;
-                TISpeechMod.Speak($"Toggled {(toggle.isOn ? "on" : "off")}", interrupt: false);
-                return;
-            }
-
-            // For EventTrigger elements (like our text fields), simulate pointer click
-            EventTrigger eventTrigger = current.GetComponent<EventTrigger>();
-            if (eventTrigger != null)
-            {
-                MelonLogger.Msg($"Simulating click on EventTrigger: {current.name}");
-                SimulatePointerClick(current);
-                TISpeechMod.Speak("Selected", interrupt: false);
-                return;
-            }
-
-            TISpeechMod.Speak("Element cannot be activated", interrupt: false);
-        }
-
-        /// <summary>
-        /// Simulate a pointer click event on an element
+        /// Simulate pointer click event
         /// </summary>
         private void SimulatePointerClick(GameObject target)
         {
@@ -482,173 +945,9 @@ namespace TISpeech
                 position = Vector2.zero,
                 button = PointerEventData.InputButton.Left
             };
-
             ExecuteEvents.Execute(target, eventData, ExecuteEvents.pointerClickHandler);
         }
 
-        /// <summary>
-        /// Simulate a pointer enter (hover) event on an element
-        /// This triggers EventTrigger handlers and tooltip display
-        /// </summary>
-        private void SimulatePointerEnter(GameObject target)
-        {
-            var eventData = new PointerEventData(EventSystem.current)
-            {
-                position = Vector2.zero
-            };
-
-            ExecuteEvents.Execute(target, eventData, ExecuteEvents.pointerEnterHandler);
-        }
-
-        /// <summary>
-        /// Announce the currently focused element by triggering hover events
-        /// This triggers our EventTrigger handlers and game tooltips
-        /// </summary>
-        private void AnnounceCurrent()
-        {
-            if (focusIndex < 0 || focusIndex >= currentElements.Count)
-                return;
-
-            GameObject current = currentElements[focusIndex];
-
-            // Debounce based on element identity, not text
-            float currentTime = Time.unscaledTime;
-            string elementId = current.GetInstanceID().ToString();
-            if (elementId == lastAnnouncement && (currentTime - lastAnnouncementTime) < ANNOUNCEMENT_DEBOUNCE_TIME)
-                return;
-
-            lastAnnouncement = elementId;
-            lastAnnouncementTime = currentTime;
-
-            // Announce position first
-            string position = $"{focusIndex + 1} of {currentElements.Count}";
-            TISpeechMod.Speak(position, interrupt: true);
-
-            // Trigger hover event - this will fire our EventTrigger handlers and show tooltips
-            // Our existing patches (TooltipPatches, ResearchPriorityPatches, etc.) will handle announcements
-            SimulatePointerEnter(current);
-
-            MelonLogger.Msg($"Focused element {focusIndex + 1} of {currentElements.Count}: {current.name}");
-        }
-
-        /// <summary>
-        /// Read detailed information about the current element
-        /// </summary>
-        private void ReadCurrentDetails()
-        {
-            if (focusIndex < 0 || focusIndex >= currentElements.Count)
-            {
-                TISpeechMod.Speak("No element focused", interrupt: true);
-                return;
-            }
-
-            GameObject current = currentElements[focusIndex];
-            string details = GetElementDetailsDescription(current);
-
-            TISpeechMod.Speak(details, interrupt: true);
-            MelonLogger.Msg($"Details: {details}");
-        }
-
-        /// <summary>
-        /// Get a brief description of an element
-        /// </summary>
-        private string GetElementDescription(GameObject element)
-        {
-            // Try to get text from TMP_Text component on the element itself
-            TMP_Text tmpText = element.GetComponent<TMP_Text>();
-            if (tmpText != null && !string.IsNullOrWhiteSpace(tmpText.text))
-            {
-                string text = TISpeechMod.CleanText(tmpText.text);
-                if (!string.IsNullOrWhiteSpace(text))
-                    return text;
-            }
-
-            // Try to get text from Text component on the element itself
-            Text uiText = element.GetComponent<Text>();
-            if (uiText != null && !string.IsNullOrWhiteSpace(uiText.text))
-            {
-                return TISpeechMod.CleanText(uiText.text);
-            }
-
-            // Check component type and get child text
-            Button button = element.GetComponent<Button>();
-            Toggle toggle = element.GetComponent<Toggle>();
-            EventTrigger eventTrigger = element.GetComponent<EventTrigger>();
-
-            // Try to get text from children (works for Buttons, Toggles, and EventTriggers)
-            TMP_Text childTmpText = element.GetComponentInChildren<TMP_Text>();
-            if (childTmpText != null && !string.IsNullOrWhiteSpace(childTmpText.text))
-            {
-                string text = TISpeechMod.CleanText(childTmpText.text);
-
-                // Add type prefix if it's a button or toggle
-                if (button != null)
-                    return $"Button: {text}";
-                else if (toggle != null)
-                    return $"Toggle: {text}, {(toggle.isOn ? "on" : "off")}";
-                else
-                    return text;
-            }
-
-            // Try standard UI Text in children as fallback
-            Text childUiText = element.GetComponentInChildren<Text>();
-            if (childUiText != null && !string.IsNullOrWhiteSpace(childUiText.text))
-            {
-                string text = TISpeechMod.CleanText(childUiText.text);
-
-                if (button != null)
-                    return $"Button: {text}";
-                else if (toggle != null)
-                    return $"Toggle: {text}, {(toggle.isOn ? "on" : "off")}";
-                else
-                    return text;
-            }
-
-            // Type-specific fallbacks when no text found
-            if (button != null)
-                return "Button";
-            if (toggle != null)
-                return $"Toggle, {(toggle.isOn ? "on" : "off")}";
-
-            // Final fallback to object name
-            return element.name;
-        }
-
-        /// <summary>
-        /// Get detailed description of an element (for Numpad Period)
-        /// </summary>
-        private string GetElementDetailsDescription(GameObject element)
-        {
-            var details = new System.Text.StringBuilder();
-
-            // Element name
-            details.Append($"Element: {element.name}. ");
-
-            // Component types
-            var components = new List<string>();
-            if (element.GetComponent<Button>() != null) components.Add("Button");
-            if (element.GetComponent<Toggle>() != null) components.Add("Toggle");
-            if (element.GetComponent<EventTrigger>() != null) components.Add("EventTrigger");
-            if (element.GetComponent<TMP_Text>() != null) components.Add("Text");
-
-            if (components.Count > 0)
-                details.Append($"Type: {string.Join(", ", components)}. ");
-
-            // Position info
-            RectTransform rectTransform = element.GetComponent<RectTransform>();
-            if (rectTransform != null)
-            {
-                Vector3 screenPos = RectTransformUtility.WorldToScreenPoint(null, rectTransform.position);
-                details.Append($"Position: X {screenPos.x:F0}, Y {screenPos.y:F0}. ");
-            }
-
-            // Parent hierarchy (for context)
-            if (element.transform.parent != null)
-            {
-                details.Append($"Parent: {element.transform.parent.name}. ");
-            }
-
-            return details.ToString();
-        }
+        #endregion
     }
 }
