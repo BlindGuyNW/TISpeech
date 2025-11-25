@@ -10,7 +10,7 @@ namespace TISpeech.Patches
 {
     /// <summary>
     /// Patches for the mission selection panel to make mission details accessible
-    /// Adds hover handlers to non-interactive text fields showing mission info and sliders
+    /// Adds hover handlers to non-interactive text fields showing mission info, sliders, and score modifiers
     /// </summary>
     [HarmonyPatch]
     public class MissionPanelPatches
@@ -231,6 +231,90 @@ namespace TISpeech.Patches
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error in OnResourceSliderChangedValue patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch ModifierListItemController.SetModifiers to add hover handlers to bonus/penalty modifiers
+        /// These show things like "Control points in neighbors", "Local control points", etc.
+        /// </summary>
+        [HarmonyPatch(typeof(ModifierListItemController), "SetModifiers")]
+        [HarmonyPostfix]
+        public static void SetModifiers_Postfix(ModifierListItemController __instance, string modifierName, float modifierValue)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady || __instance == null)
+                    return;
+
+                // Add hover handler to the modifier name text field
+                if (__instance.modifierName != null)
+                {
+                    AddModifierTextHoverHandler(__instance.modifierName, __instance);
+                }
+
+                // Add hover handler to the modifier value text field
+                if (__instance.modifierValue != null)
+                {
+                    AddModifierTextHoverHandler(__instance.modifierValue, __instance);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in SetModifiers patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Add hover handler to a modifier text field that announces both name and value
+        /// </summary>
+        private static void AddModifierTextHoverHandler(TMP_Text textField, ModifierListItemController controller)
+        {
+            if (textField == null)
+                return;
+
+            EventTrigger trigger = textField.gameObject.GetComponent<EventTrigger>();
+            if (trigger == null)
+            {
+                trigger = textField.gameObject.AddComponent<EventTrigger>();
+            }
+            else
+            {
+                // Clear existing PointerEnter handlers to avoid duplicates
+                trigger.triggers.RemoveAll(e => e.eventID == EventTriggerType.PointerEnter);
+            }
+
+            EventTrigger.Entry entry = new EventTrigger.Entry();
+            entry.eventID = EventTriggerType.PointerEnter;
+            entry.callback.AddListener((data) => OnModifierHover(controller));
+            trigger.triggers.Add(entry);
+        }
+
+        /// <summary>
+        /// Handler for modifier hover - announces both name and value together
+        /// </summary>
+        private static void OnModifierHover(ModifierListItemController controller)
+        {
+            try
+            {
+                if (controller == null)
+                    return;
+
+                string name = controller.modifierName != null ? TISpeechMod.CleanText(controller.modifierName.text) : "";
+                string value = controller.modifierValue != null ? TISpeechMod.CleanText(controller.modifierValue.text) : "";
+
+                if (string.IsNullOrEmpty(name) && string.IsNullOrEmpty(value))
+                    return;
+
+                string announcement = !string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(value)
+                    ? $"{name}: {value}"
+                    : !string.IsNullOrEmpty(name) ? name : value;
+
+                TISpeechMod.Speak(announcement, interrupt: false);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in modifier hover handler: {ex.Message}");
             }
         }
 
