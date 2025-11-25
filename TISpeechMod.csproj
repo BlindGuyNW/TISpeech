@@ -66,6 +66,10 @@
       <HintPath>$(ManagedDir)\Unity.TextMeshPro.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Unity.Entities">
+      <HintPath>$(ManagedDir)\Unity.Entities.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Source Files - Only compile mod files, not decompiled code -->
