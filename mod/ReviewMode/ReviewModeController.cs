@@ -4,14 +4,14 @@ using System.Text;
 using MelonLoader;
 using UnityEngine;
 using PavonisInteractive.TerraInvicta;
-using PavonisInteractive.TerraInvicta.Actions;
+using TISpeech.ReviewMode.Screens;
 using TISpeech.ReviewMode.Sections;
 
 namespace TISpeech.ReviewMode
 {
     /// <summary>
     /// Main controller for review mode.
-    /// Provides direct access to game state without relying on UI structure.
+    /// Uses hierarchical navigation through screens, items, sections, and section items.
     /// </summary>
     public class ReviewModeController : MonoBehaviour
     {
@@ -21,14 +21,12 @@ namespace TISpeech.ReviewMode
         private bool isActive = false;
         public bool IsActive => isActive;
 
-        // Current councilor being reviewed
-        private int currentCouncilorIndex = 0;
-        private TICouncilorState currentCouncilor = null;
+        // Hierarchical navigation state
+        private NavigationState navigation = new NavigationState();
 
-        // Sections for current councilor
-        private List<ISection> sections = new List<ISection>();
-        private int currentSectionIndex = 0;
-        private int currentItemIndex = 0;
+        // Available screens
+        private CouncilScreen councilScreen;
+        // Future: NationsScreen, ResearchScreen, etc.
 
         // Selection sub-mode (for multi-step actions like mission assignment)
         private SelectionSubMode selectionMode = null;
@@ -44,6 +42,7 @@ namespace TISpeech.ReviewMode
             if (instance == null)
             {
                 instance = this;
+                InitializeScreens();
             }
             else if (instance != this)
             {
@@ -70,8 +69,30 @@ namespace TISpeech.ReviewMode
             instance = controller;
             UnityEngine.Object.DontDestroyOnLoad(go);
 
-            MelonLogger.Msg("ReviewModeController created with direct game state access");
+            MelonLogger.Msg("ReviewModeController created with hierarchical screen navigation");
             return controller;
+        }
+
+        private void InitializeScreens()
+        {
+            // Create screens
+            councilScreen = new CouncilScreen();
+            councilScreen.OnEnterSelectionMode = EnterSelectionMode;
+            councilScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
+            // Future: Add more screens here
+            // nationsScreen = new NationsScreen();
+            // researchScreen = new ResearchScreen();
+
+            // Register screens with navigation
+            var screens = new List<ScreenBase>
+            {
+                councilScreen
+                // Future: nationsScreen, researchScreen, resourcesScreen, intelScreen
+            };
+
+            navigation.RegisterScreens(screens);
+            MelonLogger.Msg($"Registered {screens.Count} screens for review mode");
         }
 
         #endregion
@@ -106,7 +127,7 @@ namespace TISpeech.ReviewMode
                 }
                 else
                 {
-                    inputHandled = HandleNormalModeInput();
+                    inputHandled = HandleNavigationInput();
                 }
 
                 if (inputHandled)
@@ -137,25 +158,23 @@ namespace TISpeech.ReviewMode
                 TIInputManager.BlockKeybindings();
                 isActive = true;
 
-                // Initialize with first councilor
-                var councilors = GetCouncilors();
-                if (councilors.Count > 0)
-                {
-                    currentCouncilorIndex = 0;
-                    RefreshCurrentCouncilor();
+                // Reset navigation to initial state (Council screen)
+                navigation.Reset();
 
-                    string announcement = $"Review mode. {councilors.Count} councilors. ";
-                    announcement += $"Councilor {currentCouncilorIndex + 1}: {currentCouncilor.displayName}. ";
-                    announcement += $"{sections.Count} sections. ";
-                    announcement += "Use Page Up/Down for councilors, Numpad 8/2 for sections, 4/6 for items, Enter to activate.";
+                // Announce activation
+                var screen = navigation.CurrentScreen;
+                if (screen != null)
+                {
+                    string announcement = $"Review mode. {screen.GetActivationAnnouncement()} ";
+                    announcement += "Use Numpad 8/2 to navigate, Enter to drill in, Escape to back out.";
                     TISpeechMod.Speak(announcement, interrupt: true);
                 }
                 else
                 {
-                    TISpeechMod.Speak("Review mode. No councilors available.", interrupt: true);
+                    TISpeechMod.Speak("Review mode. No screens available.", interrupt: true);
                 }
 
-                MelonLogger.Msg("Review mode activated");
+                MelonLogger.Msg("Review mode activated with hierarchical navigation");
             }
             catch (Exception ex)
             {
@@ -185,62 +204,112 @@ namespace TISpeech.ReviewMode
 
         #region Input Handling
 
-        private bool HandleNormalModeInput()
+        private bool HandleNavigationInput()
         {
-            // Councilor navigation (PageUp/PageDown)
-            if (Input.GetKeyDown(KeyCode.PageUp))
-            {
-                PreviousCouncilor();
-                return true;
-            }
-            if (Input.GetKeyDown(KeyCode.PageDown))
-            {
-                NextCouncilor();
-                return true;
-            }
-
-            // Section navigation (Numpad 8/2)
+            // Navigate up/previous (Numpad 8)
             if (Input.GetKeyDown(KeyCode.Keypad8))
             {
-                PreviousSection();
-                return true;
-            }
-            if (Input.GetKeyDown(KeyCode.Keypad2))
-            {
-                NextSection();
+                navigation.Previous();
+                TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
                 return true;
             }
 
-            // Item navigation (Numpad 4/6)
+            // Navigate down/next (Numpad 2)
+            if (Input.GetKeyDown(KeyCode.Keypad2))
+            {
+                navigation.Next();
+                TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Alternative item navigation (Numpad 4/6) - same as 8/2 for consistency
             if (Input.GetKeyDown(KeyCode.Keypad4))
             {
-                PreviousItem();
+                navigation.Previous();
+                TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
                 return true;
             }
             if (Input.GetKeyDown(KeyCode.Keypad6))
             {
-                NextItem();
+                navigation.Next();
+                TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
                 return true;
             }
 
-            // Activate (Numpad Enter or Numpad 5)
+            // Drill down / Activate (Numpad Enter or Numpad 5)
             if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
             {
-                ActivateCurrentItem();
+                if (navigation.DrillDown())
+                {
+                    TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                }
+                else
+                {
+                    // At deepest level with no further action
+                    TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                }
                 return true;
             }
 
-            // Read current (Numpad *)
+            // Back out (Escape only - Numpad 0 is used for toggle)
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                if (navigation.BackOut())
+                {
+                    TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                }
+                else
+                {
+                    // At top level - deactivate review mode
+                    DeactivateReviewMode();
+                }
+                return true;
+            }
+
+            // Read detail (Numpad *)
             if (Input.GetKeyDown(KeyCode.KeypadMultiply))
             {
-                ReadCurrentState();
+                TISpeechMod.Speak(navigation.GetCurrentDetail(), interrupt: true);
                 return true;
             }
 
-            // List sections (Numpad /)
+            // List items at current level (Numpad /)
             if (Input.GetKeyDown(KeyCode.KeypadDivide))
             {
-                ListSections();
+                TISpeechMod.Speak(navigation.ListCurrentLevel(), interrupt: true);
+                return true;
+            }
+
+            // PageUp/PageDown for quick screen switching (when at Screens level)
+            if (Input.GetKeyDown(KeyCode.PageUp))
+            {
+                if (navigation.CurrentLevel == NavigationLevel.Screens)
+                {
+                    navigation.Previous();
+                    TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                }
+                else
+                {
+                    // Back out to screens level
+                    while (navigation.CurrentLevel != NavigationLevel.Screens && navigation.BackOut()) { }
+                    TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                }
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.PageDown))
+            {
+                if (navigation.CurrentLevel == NavigationLevel.Screens)
+                {
+                    navigation.Next();
+                    TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                }
+                else
+                {
+                    // Back out to screens level
+                    while (navigation.CurrentLevel != NavigationLevel.Screens && navigation.BackOut()) { }
+                    navigation.Next();
+                    TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                }
                 return true;
             }
 
@@ -277,232 +346,14 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Read current selection (Numpad *)
+            // Read detail (Numpad *) - show full modifier breakdown
             if (Input.GetKeyDown(KeyCode.KeypadMultiply))
             {
-                AnnounceSelectionItem();
+                AnnounceSelectionDetail();
                 return true;
             }
 
             return false;
-        }
-
-        #endregion
-
-        #region Councilor Navigation
-
-        private void PreviousCouncilor()
-        {
-            var councilors = GetCouncilors();
-            if (councilors.Count == 0)
-            {
-                TISpeechMod.Speak("No councilors", interrupt: true);
-                return;
-            }
-
-            currentCouncilorIndex--;
-            if (currentCouncilorIndex < 0)
-                currentCouncilorIndex = councilors.Count - 1;
-
-            RefreshCurrentCouncilor();
-            AnnounceCouncilor();
-        }
-
-        private void NextCouncilor()
-        {
-            var councilors = GetCouncilors();
-            if (councilors.Count == 0)
-            {
-                TISpeechMod.Speak("No councilors", interrupt: true);
-                return;
-            }
-
-            currentCouncilorIndex++;
-            if (currentCouncilorIndex >= councilors.Count)
-                currentCouncilorIndex = 0;
-
-            RefreshCurrentCouncilor();
-            AnnounceCouncilor();
-        }
-
-        private void AnnounceCouncilor()
-        {
-            var councilors = GetCouncilors();
-            string announcement = $"Councilor {currentCouncilorIndex + 1} of {councilors.Count}: {currentCouncilor.displayName}";
-
-            // Add current mission if any
-            if (currentCouncilor.activeMission != null)
-            {
-                announcement += $", {currentCouncilor.activeMission.missionTemplate.displayName}";
-            }
-            else
-            {
-                announcement += ", no mission";
-            }
-
-            TISpeechMod.Speak(announcement, interrupt: true);
-        }
-
-        #endregion
-
-        #region Section/Item Navigation
-
-        private void PreviousSection()
-        {
-            if (sections.Count == 0)
-            {
-                TISpeechMod.Speak("No sections", interrupt: true);
-                return;
-            }
-
-            currentSectionIndex--;
-            if (currentSectionIndex < 0)
-                currentSectionIndex = sections.Count - 1;
-            currentItemIndex = 0;
-
-            AnnounceCurrentSection();
-        }
-
-        private void NextSection()
-        {
-            if (sections.Count == 0)
-            {
-                TISpeechMod.Speak("No sections", interrupt: true);
-                return;
-            }
-
-            currentSectionIndex++;
-            if (currentSectionIndex >= sections.Count)
-                currentSectionIndex = 0;
-            currentItemIndex = 0;
-
-            AnnounceCurrentSection();
-        }
-
-        private void PreviousItem()
-        {
-            var section = GetCurrentSection();
-            if (section == null || section.ItemCount == 0)
-            {
-                TISpeechMod.Speak("No items", interrupt: true);
-                return;
-            }
-
-            currentItemIndex--;
-            if (currentItemIndex < 0)
-                currentItemIndex = section.ItemCount - 1;
-
-            AnnounceCurrentItem();
-        }
-
-        private void NextItem()
-        {
-            var section = GetCurrentSection();
-            if (section == null || section.ItemCount == 0)
-            {
-                TISpeechMod.Speak("No items", interrupt: true);
-                return;
-            }
-
-            currentItemIndex++;
-            if (currentItemIndex >= section.ItemCount)
-                currentItemIndex = 0;
-
-            AnnounceCurrentItem();
-        }
-
-        private void ActivateCurrentItem()
-        {
-            var section = GetCurrentSection();
-            if (section == null || section.ItemCount == 0)
-            {
-                TISpeechMod.Speak("No item to activate", interrupt: true);
-                return;
-            }
-
-            if (!section.CanActivate(currentItemIndex))
-            {
-                // Just re-read the item if not activatable
-                AnnounceCurrentItem();
-                return;
-            }
-
-            try
-            {
-                section.Activate(currentItemIndex);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"Error activating item: {ex.Message}");
-                TISpeechMod.Speak("Error activating item", interrupt: true);
-            }
-        }
-
-        private ISection GetCurrentSection()
-        {
-            if (sections.Count == 0 || currentSectionIndex < 0 || currentSectionIndex >= sections.Count)
-                return null;
-            return sections[currentSectionIndex];
-        }
-
-        private void AnnounceCurrentSection()
-        {
-            var section = GetCurrentSection();
-            if (section == null) return;
-
-            TISpeechMod.Speak($"{section.Name}, {section.ItemCount} items", interrupt: true);
-        }
-
-        private void AnnounceCurrentItem()
-        {
-            var section = GetCurrentSection();
-            if (section == null || section.ItemCount == 0) return;
-
-            string itemText = section.ReadItem(currentItemIndex);
-            bool canActivate = section.CanActivate(currentItemIndex);
-            string suffix = canActivate ? " (press Enter to activate)" : "";
-
-            TISpeechMod.Speak($"{currentItemIndex + 1} of {section.ItemCount}: {itemText}{suffix}", interrupt: true);
-        }
-
-        private void ListSections()
-        {
-            if (sections.Count == 0)
-            {
-                TISpeechMod.Speak("No sections", interrupt: true);
-                return;
-            }
-
-            var sb = new StringBuilder();
-            sb.Append($"{sections.Count} sections: ");
-            for (int i = 0; i < sections.Count; i++)
-            {
-                if (i == currentSectionIndex)
-                    sb.Append($"{sections[i].Name} (current), ");
-                else
-                    sb.Append($"{sections[i].Name}, ");
-            }
-
-            TISpeechMod.Speak(sb.ToString().TrimEnd(',', ' '), interrupt: true);
-        }
-
-        private void ReadCurrentState()
-        {
-            if (currentCouncilor == null)
-            {
-                TISpeechMod.Speak("No councilor selected", interrupt: true);
-                return;
-            }
-
-            var section = GetCurrentSection();
-            if (section != null)
-            {
-                TISpeechMod.Speak($"{currentCouncilor.displayName}, {section.Name}: {section.ReadSummary()}", interrupt: true);
-            }
-            else
-            {
-                TISpeechMod.Speak(currentCouncilor.displayName, interrupt: true);
-            }
         }
 
         #endregion
@@ -518,7 +369,7 @@ namespace TISpeech.ReviewMode
             }
 
             selectionMode = new SelectionSubMode(prompt, options, onSelect);
-            TISpeechMod.Speak($"{prompt}. {options.Count} options. Use up/down to browse, Enter to select, Escape to cancel.", interrupt: true);
+            TISpeechMod.Speak($"{prompt}. {options.Count} options. Use up/down to browse, Enter to select, * for detail, Escape to cancel.", interrupt: true);
             AnnounceSelectionItem();
         }
 
@@ -530,13 +381,21 @@ namespace TISpeech.ReviewMode
             TISpeechMod.Speak($"{selectionMode.CurrentIndex + 1} of {selectionMode.Count}: {option.Label}", interrupt: true);
         }
 
+        private void AnnounceSelectionDetail()
+        {
+            if (selectionMode == null) return;
+
+            var option = selectionMode.CurrentOption;
+            string detail = !string.IsNullOrEmpty(option.DetailText) ? option.DetailText : option.Label;
+            TISpeechMod.Speak(detail, interrupt: true);
+        }
+
         private void ConfirmSelection()
         {
             if (selectionMode == null) return;
 
             int selectedIndex = selectionMode.CurrentIndex;
             var onSelect = selectionMode.OnSelect;
-            string label = selectionMode.CurrentOption.Label;
 
             selectionMode = null;
 
@@ -559,259 +418,6 @@ namespace TISpeech.ReviewMode
 
         #endregion
 
-        #region Build Sections from Game State
-
-        private void RefreshCurrentCouncilor()
-        {
-            var councilors = GetCouncilors();
-            if (councilors.Count == 0 || currentCouncilorIndex < 0 || currentCouncilorIndex >= councilors.Count)
-            {
-                currentCouncilor = null;
-                sections.Clear();
-                return;
-            }
-
-            currentCouncilor = councilors[currentCouncilorIndex];
-            BuildSectionsForCouncilor(currentCouncilor);
-            currentSectionIndex = 0;
-            currentItemIndex = 0;
-        }
-
-        private void BuildSectionsForCouncilor(TICouncilorState councilor)
-        {
-            sections.Clear();
-
-            // Info section
-            var infoSection = new DataSection("Info");
-            infoSection.AddItem("Name", councilor.displayName);
-            infoSection.AddItem("Type", councilor.typeTemplate?.displayName ?? "Unknown");
-
-            if (councilor.activeMission != null)
-            {
-                var mission = councilor.activeMission;
-                string missionInfo = mission.missionTemplate.displayName;
-                if (mission.target != null)
-                    missionInfo += $" on {mission.target.displayName}";
-                infoSection.AddItem("Current Mission", missionInfo);
-            }
-            else
-            {
-                infoSection.AddItem("Current Mission", "None");
-            }
-
-            infoSection.AddItem("Location", GetLocationString(councilor));
-            sections.Add(infoSection);
-
-            // Stats section
-            var statsSection = new DataSection("Stats");
-            statsSection.AddItem("Persuasion", councilor.GetAttribute(CouncilorAttribute.Persuasion).ToString());
-            statsSection.AddItem("Investigation", councilor.GetAttribute(CouncilorAttribute.Investigation).ToString());
-            statsSection.AddItem("Espionage", councilor.GetAttribute(CouncilorAttribute.Espionage).ToString());
-            statsSection.AddItem("Command", councilor.GetAttribute(CouncilorAttribute.Command).ToString());
-            statsSection.AddItem("Administration", councilor.GetAttribute(CouncilorAttribute.Administration).ToString());
-            statsSection.AddItem("Science", councilor.GetAttribute(CouncilorAttribute.Science).ToString());
-            statsSection.AddItem("Security", councilor.GetAttribute(CouncilorAttribute.Security).ToString());
-            statsSection.AddItem("Loyalty", councilor.GetAttribute(CouncilorAttribute.Loyalty).ToString());
-            sections.Add(statsSection);
-
-            // Traits section
-            if (councilor.traits != null && councilor.traits.Count > 0)
-            {
-                var traitsSection = new DataSection("Traits");
-                foreach (var trait in councilor.traits)
-                {
-                    traitsSection.AddItem(trait.displayName);
-                }
-                sections.Add(traitsSection);
-            }
-
-            // Orgs section
-            if (councilor.orgs != null && councilor.orgs.Count > 0)
-            {
-                var orgsSection = new DataSection("Organizations");
-                foreach (var org in councilor.orgs)
-                {
-                    orgsSection.AddItem(org.displayName);
-                }
-                sections.Add(orgsSection);
-            }
-
-            // Missions section (actionable)
-            // Filter to only missions that can be afforded AND have valid targets
-            var missionsSection = new DataSection("Assign Mission");
-            var possibleMissions = councilor.GetPossibleMissionList(filterForCouncilorConditions: true, sort: true);
-            int actionableMissionCount = 0;
-
-            foreach (var mission in possibleMissions)
-            {
-                try
-                {
-                    // Check if mission can be afforded and has valid targets (same check as UI)
-                    bool canAfford = mission.CanAfford(councilor.faction, councilor);
-                    int targetCount = mission.target?.GetValidTargets(mission, councilor)?.Count ?? 0;
-
-                    if (canAfford && targetCount > 0)
-                    {
-                        // Capture for closure
-                        var m = mission;
-                        var c = councilor;
-
-                        missionsSection.AddItem(mission.displayName, onActivate: () =>
-                        {
-                            StartMissionAssignment(c, m);
-                        });
-                        actionableMissionCount++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"Error checking mission {mission.displayName}: {ex.Message}");
-                }
-            }
-
-            if (actionableMissionCount == 0)
-            {
-                missionsSection.AddItem("No available missions");
-            }
-            sections.Add(missionsSection);
-
-            // Automation section
-            var automationSection = new DataSection("Automation");
-            string autoStatus = councilor.permanentDefenseMode ? "Enabled" : "Disabled";
-            automationSection.AddItem("Auto-assign missions", autoStatus, onActivate: () =>
-            {
-                ToggleAutomation(councilor);
-            });
-            sections.Add(automationSection);
-
-            MelonLogger.Msg($"Built {sections.Count} sections for {councilor.displayName}");
-        }
-
-        private string GetLocationString(TICouncilorState councilor)
-        {
-            try
-            {
-                if (councilor.location != null)
-                    return councilor.location.displayName ?? "Unknown location";
-                return "Unknown location";
-            }
-            catch
-            {
-                return "Unknown location";
-            }
-        }
-
-        #endregion
-
-        #region Actions
-
-        private void StartMissionAssignment(TICouncilorState councilor, TIMissionTemplate mission)
-        {
-            MelonLogger.Msg($"Starting mission assignment: {councilor.displayName} -> {mission.displayName}");
-
-            // Get valid targets
-            IList<TIGameState> targets = null;
-            try
-            {
-                targets = mission.GetValidTargets(councilor);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"Error getting valid targets: {ex.Message}");
-            }
-
-            if (targets == null || targets.Count == 0)
-            {
-                TISpeechMod.Speak($"No valid targets for {mission.displayName}", interrupt: true);
-                return;
-            }
-
-            // Build selection options with success chance
-            var options = new List<SelectionOption>();
-            foreach (var target in targets)
-            {
-                string label = target.displayName ?? "Unknown target";
-
-                // Try to get success chance
-                try
-                {
-                    if (mission.resolutionMethod != null)
-                    {
-                        string successChance = mission.resolutionMethod.GetSuccessChanceString(mission, councilor, target, 0f);
-                        if (!string.IsNullOrEmpty(successChance))
-                        {
-                            label += $", {successChance}";
-                        }
-                    }
-                }
-                catch
-                {
-                    // Some missions may not have contested resolution
-                }
-
-                options.Add(new SelectionOption
-                {
-                    Label = label,
-                    Data = target
-                });
-            }
-
-            // Enter selection mode
-            EnterSelectionMode($"Select target for {mission.displayName}", options, (index) =>
-            {
-                var selectedTarget = (TIGameState)options[index].Data;
-                ExecuteMissionAssignment(councilor, mission, selectedTarget);
-            });
-        }
-
-        private void ExecuteMissionAssignment(TICouncilorState councilor, TIMissionTemplate mission, TIGameState target)
-        {
-            try
-            {
-                var faction = councilor.faction;
-                var action = new AssignCouncilorToMission(councilor, mission, target, 0f, false);
-                faction.playerControl.StartAction(action);
-
-                string announcement = $"Assigned {councilor.displayName} to {mission.displayName}";
-                if (target != null)
-                    announcement += $" targeting {target.displayName}";
-
-                TISpeechMod.Speak(announcement, interrupt: true);
-                MelonLogger.Msg(announcement);
-
-                // Refresh to show updated state
-                RefreshCurrentCouncilor();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"Error executing mission assignment: {ex.Message}");
-                TISpeechMod.Speak("Error assigning mission", interrupt: true);
-            }
-        }
-
-        private void ToggleAutomation(TICouncilorState councilor)
-        {
-            try
-            {
-                bool newState = !councilor.permanentDefenseMode;
-                var action = new ToggleAutomateCouncilorAction(councilor, newState);
-                councilor.faction.playerControl.StartAction(action);
-
-                string status = newState ? "enabled" : "disabled";
-                TISpeechMod.Speak($"Automation {status} for {councilor.displayName}", interrupt: true);
-
-                // Refresh
-                RefreshCurrentCouncilor();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"Error toggling automation: {ex.Message}");
-                TISpeechMod.Speak("Error toggling automation", interrupt: true);
-            }
-        }
-
-        #endregion
-
         #region Helpers
 
         private bool IsGameReady()
@@ -820,22 +426,18 @@ namespace TISpeech.ReviewMode
                    GameControl.control.activePlayer != null;
         }
 
-        private List<TICouncilorState> GetCouncilors()
-        {
-            if (!IsGameReady())
-                return new List<TICouncilorState>();
-
-            return GameControl.control.activePlayer.councilors ?? new List<TICouncilorState>();
-        }
-
         #endregion
     }
 
     #region Selection Sub-Mode Types
 
+    /// <summary>
+    /// Option for selection mode with optional detail text.
+    /// </summary>
     public class SelectionOption
     {
         public string Label { get; set; }
+        public string DetailText { get; set; }
         public object Data { get; set; }
     }
 

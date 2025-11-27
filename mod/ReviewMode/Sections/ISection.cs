@@ -26,6 +26,13 @@ namespace TISpeech.ReviewMode.Sections
         string ReadItem(int index);
 
         /// <summary>
+        /// Read detailed information for a specific item (for Numpad * reading)
+        /// </summary>
+        /// <param name="index">Zero-based index of the item</param>
+        /// <returns>Detailed text for this item, or standard reading if no detail available</returns>
+        string ReadItemDetail(int index);
+
+        /// <summary>
         /// Read a summary of all items in the section
         /// </summary>
         /// <returns>Text summarizing all items</returns>

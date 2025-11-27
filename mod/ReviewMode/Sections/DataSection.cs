@@ -49,6 +49,20 @@ namespace TISpeech.ReviewMode.Sections
         }
 
         /// <summary>
+        /// Add an item with label, value, and detail text for extended description
+        /// </summary>
+        public void AddItem(string label, string value, string detailText, Action onActivate = null)
+        {
+            items.Add(new DataItem
+            {
+                Label = label,
+                Value = value,
+                DetailText = detailText,
+                OnActivate = onActivate
+            });
+        }
+
+        /// <summary>
         /// Clear all items
         /// </summary>
         public void Clear()
@@ -111,10 +125,26 @@ namespace TISpeech.ReviewMode.Sections
             items[index].ShowTooltipFunc?.Invoke();
         }
 
+        /// <summary>
+        /// Get detail text for an item (for Numpad * reading)
+        /// </summary>
+        public string ReadItemDetail(int index)
+        {
+            if (index < 0 || index >= items.Count)
+                return "Invalid item";
+
+            var item = items[index];
+            // If there's detail text, return it; otherwise return the standard reading
+            if (!string.IsNullOrEmpty(item.DetailText))
+                return item.DetailText;
+            return ReadItem(index);
+        }
+
         private class DataItem
         {
             public string Label;
             public string Value;
+            public string DetailText; // Extended description for detail reading
             public Action OnActivate;
             public Func<bool> HasTooltipFunc;
             public Action ShowTooltipFunc;
