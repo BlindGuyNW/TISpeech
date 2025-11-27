@@ -373,6 +373,8 @@ namespace TISpeech.Patches
 
         /// <summary>
         /// Patch UpdateListItem to add hover handlers to councilor list items
+        /// NOTE: We add the EventTrigger to the ROOT list item, not child text fields.
+        /// Adding EventTrigger to children blocks OnIntelCouncilorListItemClicked() (see pitfall #8).
         /// </summary>
         [HarmonyPatch(typeof(IntelCouncilorListItem), "UpdateListItem")]
         [HarmonyPostfix]
@@ -383,16 +385,24 @@ namespace TISpeech.Patches
                 if (!TISpeechMod.IsReady || __instance == null)
                     return;
 
-                // Get faction context from parent grid item
-                string factionName = GetParentFactionName(__instance.transform);
-                string councilorName = TISpeechMod.CleanText(__instance.councilorName?.text ?? "Councilor");
+                // Add handler to the ROOT gameObject to avoid blocking OnIntelCouncilorListItemClicked()
+                AddAlienListItemHoverHandler(__instance.gameObject, () =>
+                {
+                    string factionName = GetParentFactionName(__instance.transform);
+                    string name = TISpeechMod.CleanText(__instance.councilorName?.text ?? "");
+                    string job = TISpeechMod.CleanText(__instance.councilorJob?.text ?? "");
+                    string location = TISpeechMod.CleanText(__instance.location?.text ?? "");
 
-                // Create combined context: "Faction, Councilor Name"
-                string context = $"{factionName}, {councilorName}";
+                    StringBuilder sb = new StringBuilder();
+                    sb.Append(factionName).Append(", Councilor: ").Append(name);
+                    if (!string.IsNullOrWhiteSpace(job))
+                        sb.Append(", Job: ").Append(job);
+                    if (!string.IsNullOrWhiteSpace(location))
+                        sb.Append(", Location: ").Append(location);
+                    return sb.ToString();
+                });
 
-                AddIntelTextHoverHandler(__instance.councilorName, factionName, "Councilor");
-                AddIntelTextHoverHandler(__instance.councilorJob, context, "Job");
-                AddIntelTextHoverHandler(__instance.location, context, "Location");
+                MelonLogger.Msg($"Added councilor list item handler for {__instance.councilorName?.text}");
             }
             catch (Exception ex)
             {
@@ -588,6 +598,8 @@ namespace TISpeech.Patches
 
         /// <summary>
         /// Patch IntelAlienCouncilorListItemController.UpdateListItem to add hover handlers
+        /// NOTE: We add the EventTrigger to the ROOT list item, not child text fields.
+        /// Adding EventTrigger to children blocks OnClick() from firing (see pitfall #8).
         /// </summary>
         [HarmonyPatch(typeof(IntelAlienCouncilorListItemController), "UpdateListItem")]
         [HarmonyPostfix]
@@ -598,11 +610,17 @@ namespace TISpeech.Patches
                 if (!TISpeechMod.IsReady || __instance == null)
                     return;
 
-                string councilorName = TISpeechMod.CleanText(__instance.councilorName?.text ?? "Alien Councilor");
-                AddIntelTextHoverHandler(__instance.councilorName, "Alien", "Councilor");
-                AddIntelTextHoverHandler(__instance.councilorLocation, $"Alien, {councilorName}", "Location");
+                // Add handler to the ROOT gameObject to avoid blocking OnClick()
+                AddAlienListItemHoverHandler(__instance.gameObject, () =>
+                {
+                    string name = TISpeechMod.CleanText(__instance.councilorName?.text ?? "");
+                    string location = TISpeechMod.CleanText(__instance.councilorLocation?.text ?? "");
+                    if (!string.IsNullOrWhiteSpace(location))
+                        return $"Alien Councilor: {name}, Location: {location}";
+                    return $"Alien Councilor: {name}";
+                });
 
-                MelonLogger.Msg($"Added Alien councilor handlers for {councilorName}");
+                MelonLogger.Msg($"Added Alien councilor handler for {__instance.councilorName?.text}");
             }
             catch (Exception ex)
             {
@@ -612,6 +630,8 @@ namespace TISpeech.Patches
 
         /// <summary>
         /// Patch IntelAlienFleetListItemController.UpdateListItem to add hover handlers
+        /// NOTE: We add the EventTrigger to the ROOT list item, not child text fields.
+        /// Adding EventTrigger to children blocks OnClick() from firing (see pitfall #8).
         /// </summary>
         [HarmonyPatch(typeof(IntelAlienFleetListItemController), "UpdateListItem")]
         [HarmonyPostfix]
@@ -622,12 +642,17 @@ namespace TISpeech.Patches
                 if (!TISpeechMod.IsReady || __instance == null)
                     return;
 
-                // Fields: fleetName, location
-                string name = TISpeechMod.CleanText(__instance.fleetName?.text ?? "Alien Fleet");
-                AddIntelTextHoverHandler(__instance.fleetName, "Alien", "Fleet");
-                AddIntelTextHoverHandler(__instance.location, $"Alien, {name}", "Location");
+                // Add handler to the ROOT gameObject to avoid blocking OnClick()
+                AddAlienListItemHoverHandler(__instance.gameObject, () =>
+                {
+                    string name = TISpeechMod.CleanText(__instance.fleetName?.text ?? "");
+                    string location = TISpeechMod.CleanText(__instance.location?.text ?? "");
+                    if (!string.IsNullOrWhiteSpace(location))
+                        return $"Alien Fleet: {name}, Location: {location}";
+                    return $"Alien Fleet: {name}";
+                });
 
-                MelonLogger.Msg($"Added Alien fleet handlers for {name}");
+                MelonLogger.Msg($"Added Alien fleet handler for {__instance.fleetName?.text}");
             }
             catch (Exception ex)
             {
@@ -637,6 +662,8 @@ namespace TISpeech.Patches
 
         /// <summary>
         /// Patch IntelAlienHabListItemController.UpdateListItem to add hover handlers
+        /// NOTE: We add the EventTrigger to the ROOT list item, not child text fields.
+        /// Adding EventTrigger to children blocks OnClick() from firing (see pitfall #8).
         /// </summary>
         [HarmonyPatch(typeof(IntelAlienHabListItemController), "UpdateListItem")]
         [HarmonyPostfix]
@@ -647,12 +674,17 @@ namespace TISpeech.Patches
                 if (!TISpeechMod.IsReady || __instance == null)
                     return;
 
-                // Fields: habName, habLocation
-                string name = TISpeechMod.CleanText(__instance.habName?.text ?? "Alien Hab");
-                AddIntelTextHoverHandler(__instance.habName, "Alien", "Hab");
-                AddIntelTextHoverHandler(__instance.habLocation, $"Alien, {name}", "Location");
+                // Add handler to the ROOT gameObject to avoid blocking OnClick()
+                AddAlienListItemHoverHandler(__instance.gameObject, () =>
+                {
+                    string name = TISpeechMod.CleanText(__instance.habName?.text ?? "");
+                    string location = TISpeechMod.CleanText(__instance.habLocation?.text ?? "");
+                    if (!string.IsNullOrWhiteSpace(location))
+                        return $"Alien Hab: {name}, Location: {location}";
+                    return $"Alien Hab: {name}";
+                });
 
-                MelonLogger.Msg($"Added Alien hab handlers for {name}");
+                MelonLogger.Msg($"Added Alien hab handler for {__instance.habName?.text}");
             }
             catch (Exception ex)
             {
@@ -662,6 +694,8 @@ namespace TISpeech.Patches
 
         /// <summary>
         /// Patch IntelAlienEarthAssetListItemController.UpdateListItem to add hover handlers
+        /// NOTE: We add the EventTrigger to the ROOT list item, not child text fields.
+        /// Adding EventTrigger to children blocks OnClick() from firing (see pitfall #8).
         /// </summary>
         [HarmonyPatch(typeof(IntelAlienEarthAssetListItemController), "UpdateListItem")]
         [HarmonyPostfix]
@@ -672,12 +706,17 @@ namespace TISpeech.Patches
                 if (!TISpeechMod.IsReady || __instance == null)
                     return;
 
-                // Fields: assetName, regionName
-                string name = TISpeechMod.CleanText(__instance.assetName?.text ?? "Alien Asset");
-                AddIntelTextHoverHandler(__instance.assetName, "Alien", "Earth Asset");
-                AddIntelTextHoverHandler(__instance.regionName, $"Alien, {name}", "Region");
+                // Add handler to the ROOT gameObject to avoid blocking OnClick()
+                AddAlienListItemHoverHandler(__instance.gameObject, () =>
+                {
+                    string name = TISpeechMod.CleanText(__instance.assetName?.text ?? "");
+                    string region = TISpeechMod.CleanText(__instance.regionName?.text ?? "");
+                    if (!string.IsNullOrWhiteSpace(region))
+                        return $"Alien Earth Asset: {name}, Region: {region}";
+                    return $"Alien Earth Asset: {name}";
+                });
 
-                MelonLogger.Msg($"Added Alien earth asset handlers for {name}");
+                MelonLogger.Msg($"Added Alien earth asset handler for {__instance.assetName?.text}");
             }
             catch (Exception ex)
             {
@@ -687,6 +726,8 @@ namespace TISpeech.Patches
 
         /// <summary>
         /// Patch IntelAlienEventListItemController.UpdateListItem to add hover handlers
+        /// NOTE: We add the EventTrigger to the ROOT list item, not child text fields.
+        /// Adding EventTrigger to children blocks OnClick() from firing (see pitfall #8).
         /// </summary>
         [HarmonyPatch(typeof(IntelAlienEventListItemController), "UpdateListItem")]
         [HarmonyPostfix]
@@ -697,10 +738,14 @@ namespace TISpeech.Patches
                 if (!TISpeechMod.IsReady || __instance == null)
                     return;
 
-                // Field: eventSummary
-                AddIntelTextHoverHandler(__instance.eventSummary, "Alien", "Event");
+                // Add handler to the ROOT gameObject to avoid blocking OnClick()
+                AddAlienListItemHoverHandler(__instance.gameObject, () =>
+                {
+                    string summary = TISpeechMod.CleanText(__instance.eventSummary?.text ?? "");
+                    return $"Alien Event: {summary}";
+                });
 
-                MelonLogger.Msg("Added Alien event handlers");
+                MelonLogger.Msg("Added Alien event handler");
             }
             catch (Exception ex)
             {
@@ -1096,6 +1141,74 @@ namespace TISpeech.Patches
         #endregion
 
         #region Helper Methods
+
+        /// <summary>
+        /// Add hover handler to the ROOT of an Alien list item (not child text fields).
+        /// This avoids blocking OnClick() by not adding EventTrigger to text children.
+        /// The textBuilder func is called on hover to get current text values.
+        /// </summary>
+        private static void AddAlienListItemHoverHandler(GameObject listItemRoot, Func<string> textBuilder)
+        {
+            try
+            {
+                if (listItemRoot == null)
+                    return;
+
+                EventTrigger trigger = listItemRoot.GetComponent<EventTrigger>();
+                if (trigger == null)
+                {
+                    trigger = listItemRoot.AddComponent<EventTrigger>();
+                }
+                else
+                {
+                    // Only remove existing PointerEnter triggers to avoid duplicates
+                    trigger.triggers.RemoveAll(t => t.eventID == EventTriggerType.PointerEnter);
+                }
+
+                // Capture for closure
+                Func<string> capturedBuilder = textBuilder;
+
+                EventTrigger.Entry enterEntry = new EventTrigger.Entry();
+                enterEntry.eventID = EventTriggerType.PointerEnter;
+                enterEntry.callback.AddListener((data) => OnAlienListItemHover(capturedBuilder));
+                trigger.triggers.Add(enterEntry);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error adding alien list item hover handler: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Called when hovering over an Alien list item root
+        /// </summary>
+        private static void OnAlienListItemHover(Func<string> textBuilder)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                string announcement = textBuilder();
+                if (string.IsNullOrWhiteSpace(announcement))
+                    return;
+
+                // Debounce
+                float currentTime = Time.unscaledTime;
+                if (announcement == lastIntelText && (currentTime - lastIntelTime) < INTEL_DEBOUNCE_TIME)
+                    return;
+
+                lastIntelText = announcement;
+                lastIntelTime = currentTime;
+
+                TISpeechMod.Speak(announcement, interrupt: false);
+                MelonLogger.Msg($"Alien list item hover: {announcement}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in alien list item hover: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// Traverse up the transform hierarchy to find the parent faction grid item and get its faction name

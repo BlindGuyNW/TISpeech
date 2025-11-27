@@ -1,6 +1,7 @@
 using System;
 using MelonLoader;
 using UnityEngine;
+using TISpeech.ReviewMode;
 
 [assembly: MelonInfo(typeof(TISpeech.TISpeechMod), "TI Speech", "1.0.0", "TISpeech")]
 [assembly: MelonGame("Pavonis Interactive", "TerraInvicta")]
@@ -47,7 +48,9 @@ namespace TISpeech
             }
 
             LoggerInstance.Msg("Terra Invicta Screen Reader Mod initialized successfully!");
+            LoggerInstance.Msg("Press Numpad 0 to toggle review mode.");
         }
+
 
         public override void OnDeinitializeMelon()
         {
@@ -63,6 +66,13 @@ namespace TISpeech
         {
             // Check for accessibility keyboard commands each frame
             AccessibilityCommands.CheckKeyboardInput();
+
+            // Check for review mode navigation input (only when active)
+            var controller = ReviewModeController.Instance;
+            if (controller != null)
+            {
+                controller.CheckInput();
+            }
         }
 
         /// <summary>

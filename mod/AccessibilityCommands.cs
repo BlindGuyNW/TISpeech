@@ -3,6 +3,7 @@ using System.Text;
 using MelonLoader;
 using UnityEngine;
 using PavonisInteractive.TerraInvicta;
+using TISpeech.ReviewMode;
 
 namespace TISpeech
 {
@@ -18,6 +19,7 @@ namespace TISpeech
         private static bool altLPressed = false;
         private static bool altDPressed = false;
         private static bool altOPressed = false;
+        private static bool numpad0Pressed = false;
 
         /// <summary>
         /// Check for accessibility keyboard commands each frame
@@ -31,6 +33,20 @@ namespace TISpeech
                     return;
 
                 bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+
+                // Numpad 0 - Toggle review mode (no modifier needed)
+                if (Input.GetKeyDown(KeyCode.Keypad0))
+                {
+                    if (!numpad0Pressed)
+                    {
+                        numpad0Pressed = true;
+                        ToggleReviewMode();
+                    }
+                }
+                else if (!Input.GetKey(KeyCode.Keypad0))
+                {
+                    numpad0Pressed = false;
+                }
 
                 // Alt+S - Screen info/status
                 if (altHeld && Input.GetKeyDown(KeyCode.S))
@@ -105,6 +121,39 @@ namespace TISpeech
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error in keyboard input: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Numpad 0 - Toggle review mode
+        /// </summary>
+        private static void ToggleReviewMode()
+        {
+            try
+            {
+                // Create controller on first use if it doesn't exist
+                var controller = ReviewModeController.Instance;
+                if (controller == null)
+                {
+                    MelonLogger.Msg("Creating ReviewModeController on first use...");
+                    controller = ReviewModeController.Create();
+                }
+
+                if (controller != null)
+                {
+                    controller.Toggle();
+                }
+                else
+                {
+                    MelonLogger.Error("Failed to create ReviewModeController");
+                    TISpeechMod.Speak("Review mode not available", interrupt: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error toggling review mode: {ex.Message}");
+                MelonLogger.Error($"Stack trace: {ex.StackTrace}");
+                TISpeechMod.Speak("Error toggling review mode", interrupt: true);
             }
         }
 
