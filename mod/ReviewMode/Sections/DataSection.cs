@@ -63,6 +63,21 @@ namespace TISpeech.ReviewMode.Sections
         }
 
         /// <summary>
+        /// Add an item that can be drilled into (has sub-sections)
+        /// </summary>
+        public void AddDrillableItem(string label, string secondaryId, string detailText)
+        {
+            items.Add(new DataItem
+            {
+                Label = label,
+                Value = "",
+                SecondaryId = secondaryId,
+                DetailText = detailText,
+                IsDrillable = true
+            });
+        }
+
+        /// <summary>
         /// Clear all items
         /// </summary>
         public void Clear()
@@ -140,11 +155,32 @@ namespace TISpeech.ReviewMode.Sections
             return ReadItem(index);
         }
 
-        private class DataItem
+        public bool CanDrillIntoItem(int index)
+        {
+            if (index < 0 || index >= items.Count)
+                return false;
+            return items[index].IsDrillable;
+        }
+
+        public string GetItemSecondaryValue(int index)
+        {
+            if (index < 0 || index >= items.Count)
+                return null;
+            return items[index].SecondaryId;
+        }
+
+        /// <summary>
+        /// Access to items for checking count
+        /// </summary>
+        public IReadOnlyList<DataItem> Items => items.AsReadOnly();
+
+        public class DataItem
         {
             public string Label;
             public string Value;
             public string DetailText; // Extended description for detail reading
+            public string SecondaryId; // Identifier for drillable items (e.g., tech dataName)
+            public bool IsDrillable; // Whether this item can be drilled into
             public Action OnActivate;
             public Func<bool> HasTooltipFunc;
             public Action ShowTooltipFunc;

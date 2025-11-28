@@ -63,5 +63,19 @@ namespace TISpeech.ReviewMode.Sections
         /// </summary>
         /// <param name="index">Zero-based index of the item</param>
         void ShowTooltip(int index);
+
+        /// <summary>
+        /// Check if the item at the given index can be drilled into (has sub-sections)
+        /// </summary>
+        /// <param name="index">Zero-based index of the item</param>
+        /// <returns>True if the item has sub-sections</returns>
+        bool CanDrillIntoItem(int index);
+
+        /// <summary>
+        /// Get the secondary identifier for the item (e.g., tech dataName)
+        /// </summary>
+        /// <param name="index">Zero-based index of the item</param>
+        /// <returns>Secondary value or null</returns>
+        string GetItemSecondaryValue(int index);
     }
 }

@@ -54,6 +54,17 @@ namespace TISpeech.ReviewMode.Screens
         }
 
         /// <summary>
+        /// Get sections for a drilled-into section item (e.g., a tech in the tech browser).
+        /// Override this to support drilling into section items that have sub-content.
+        /// </summary>
+        /// <param name="secondaryId">The secondary identifier of the section item (e.g., tech dataName)</param>
+        /// <returns>Sections for the drilled-into item, or empty list if not supported</returns>
+        public virtual IReadOnlyList<ISection> GetSectionsForSectionItem(string secondaryId)
+        {
+            return new List<ISection>();
+        }
+
+        /// <summary>
         /// Called when the screen becomes active.
         /// Override to refresh data.
         /// </summary>

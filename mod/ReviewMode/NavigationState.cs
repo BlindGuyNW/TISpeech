@@ -37,6 +37,13 @@ namespace TISpeech.ReviewMode
         // Cache for current item's sections
         private IReadOnlyList<ISection> currentSections = null;
 
+        // State for drilling into section items (e.g., techs in tech browser)
+        private bool inSectionItemDrill = false;
+        private IReadOnlyList<ISection> parentSections = null;
+        private int parentSectionIndex = 0;
+        private int parentSectionItemIndex = 0;
+        private string drilledItemSecondaryId = null;
+
         /// <summary>
         /// Current navigation level in the hierarchy.
         /// </summary>
@@ -222,11 +229,40 @@ namespace TISpeech.ReviewMode
                     break;
 
                 case NavigationLevel.SectionItems:
-                    // At the deepest level - activate the item if possible
-                    if (CurrentSection != null && CurrentSection.CanActivate(currentSectionItemIndex))
+                    if (CurrentSection != null)
                     {
-                        CurrentSection.Activate(currentSectionItemIndex);
-                        return true;
+                        // Check if this section item can be drilled into (has sub-sections)
+                        if (CurrentSection.CanDrillIntoItem(currentSectionItemIndex))
+                        {
+                            string secondaryId = CurrentSection.GetItemSecondaryValue(currentSectionItemIndex);
+                            if (!string.IsNullOrEmpty(secondaryId) && CurrentScreen != null)
+                            {
+                                var subSections = CurrentScreen.GetSectionsForSectionItem(secondaryId);
+                                if (subSections != null && subSections.Count > 0)
+                                {
+                                    // Save parent state
+                                    parentSections = currentSections;
+                                    parentSectionIndex = currentSectionIndex;
+                                    parentSectionItemIndex = currentSectionItemIndex;
+                                    drilledItemSecondaryId = secondaryId;
+                                    inSectionItemDrill = true;
+
+                                    // Navigate into sub-sections
+                                    currentSections = subSections;
+                                    currentSectionIndex = 0;
+                                    currentSectionItemIndex = 0;
+                                    currentLevel = NavigationLevel.Sections;
+                                    return true;
+                                }
+                            }
+                        }
+
+                        // Fall back to activation if can't drill
+                        if (CurrentSection.CanActivate(currentSectionItemIndex))
+                        {
+                            CurrentSection.Activate(currentSectionItemIndex);
+                            return true;
+                        }
                     }
                     break;
             }
@@ -251,6 +287,18 @@ namespace TISpeech.ReviewMode
                     return true;
 
                 case NavigationLevel.Sections:
+                    // If we drilled into a section item, restore parent state
+                    if (inSectionItemDrill && parentSections != null)
+                    {
+                        currentSections = parentSections;
+                        currentSectionIndex = parentSectionIndex;
+                        currentSectionItemIndex = parentSectionItemIndex;
+                        parentSections = null;
+                        inSectionItemDrill = false;
+                        drilledItemSecondaryId = null;
+                        currentLevel = NavigationLevel.SectionItems;
+                        return true;
+                    }
                     currentLevel = NavigationLevel.Items;
                     currentSectionIndex = 0;
                     return true;
@@ -401,6 +449,46 @@ namespace TISpeech.ReviewMode
                     return currentSectionItemIndex;
             }
             return 0;
+        }
+
+        /// <summary>
+        /// Refresh sections from the current screen.
+        /// Called after actions that modify data to ensure fresh sections.
+        /// Backs out to Sections level if currently at SectionItems.
+        /// </summary>
+        public void RefreshSections()
+        {
+            if (CurrentScreen == null)
+                return;
+
+            // Re-fetch sections for current item
+            if (currentLevel == NavigationLevel.Sections || currentLevel == NavigationLevel.SectionItems)
+            {
+                currentSections = CurrentScreen.GetSectionsForItem(currentItemIndex);
+
+                // Validate section index
+                if (currentSections == null || currentSections.Count == 0)
+                {
+                    // No sections - back out to Items level
+                    currentLevel = NavigationLevel.Items;
+                    currentSectionIndex = 0;
+                    currentSectionItemIndex = 0;
+                }
+                else if (currentSectionIndex >= currentSections.Count)
+                {
+                    currentSectionIndex = 0;
+                    currentSectionItemIndex = 0;
+                }
+
+                // If at SectionItems, validate section item index
+                if (currentLevel == NavigationLevel.SectionItems && CurrentSection != null)
+                {
+                    if (currentSectionItemIndex >= CurrentSection.ItemCount)
+                    {
+                        currentSectionItemIndex = 0;
+                    }
+                }
+            }
         }
     }
 }
