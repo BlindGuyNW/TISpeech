@@ -61,3 +61,6 @@ packages/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+
+# Separate tools (not part of main mod)
+TISaveViewer/
