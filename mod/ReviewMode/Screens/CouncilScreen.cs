@@ -229,6 +229,31 @@ namespace TISpeech.ReviewMode.Screens
                     return;
                 }
 
+                // Get cost string for confirmation
+                string costString = TISpeechMod.CleanText(candidate.GetRecruitCostString(faction));
+                string actionDescription = $"Recruit {candidate.displayName}";
+                string details = ConfirmationHelper.FormatCostDetails(costString);
+
+                // Request confirmation before recruiting
+                ConfirmationHelper.RequestConfirmation(
+                    actionDescription,
+                    details,
+                    OnEnterSelectionMode,
+                    onConfirm: () => PerformRecruitment(candidate, faction),
+                    onCancel: () => OnSpeak?.Invoke("Recruitment cancelled", true)
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error initiating recruitment: {ex.Message}");
+                OnSpeak?.Invoke("Error initiating recruitment", true);
+            }
+        }
+
+        private void PerformRecruitment(TICouncilorState candidate, TIFactionState faction)
+        {
+            try
+            {
                 // Execute recruitment action
                 var action = new RecruitCouncilorAction(candidate, faction);
                 faction.playerControl.StartAction(action);

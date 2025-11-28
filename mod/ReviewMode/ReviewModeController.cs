@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using MelonLoader;
 using UnityEngine;
 using PavonisInteractive.TerraInvicta;
+using PavonisInteractive.TerraInvicta.Actions;
 using TISpeech.ReviewMode.Screens;
 using TISpeech.ReviewMode.Sections;
 
@@ -314,6 +316,13 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
+            // Confirm Assignments (Numpad +) - global action during mission phase
+            if (Input.GetKeyDown(KeyCode.KeypadPlus))
+            {
+                HandleConfirmAssignments();
+                return true;
+            }
+
             return false;
         }
 
@@ -415,6 +424,85 @@ namespace TISpeech.ReviewMode
         {
             selectionMode = null;
             TISpeechMod.Speak("Cancelled", interrupt: true);
+        }
+
+        #endregion
+
+        #region Global Actions
+
+        private void HandleConfirmAssignments()
+        {
+            try
+            {
+                var faction = GameControl.control?.activePlayer;
+                if (faction == null)
+                {
+                    TISpeechMod.Speak("No active player", interrupt: true);
+                    return;
+                }
+
+                // Check if we're in mission phase
+                var missionPhase = GameStateManager.MissionPhase();
+                if (missionPhase == null || !missionPhase.phaseActive)
+                {
+                    TISpeechMod.Speak("Not in mission phase", interrupt: true);
+                    return;
+                }
+
+                // Check if already confirmed
+                if (missionPhase.factionsSignallingComplete.Contains(faction))
+                {
+                    TISpeechMod.Speak("Assignments already confirmed", interrupt: true);
+                    return;
+                }
+
+                // Get councilor status
+                var activeCouncilors = faction.activeCouncilors;
+                int total = activeCouncilors.Count;
+                int assigned = activeCouncilors.Count(c => c.HasMission);
+                int unassigned = total - assigned;
+
+                string statusMessage;
+                if (unassigned == 0)
+                {
+                    statusMessage = $"All {total} councilors have missions assigned";
+                }
+                else
+                {
+                    statusMessage = $"{assigned} of {total} councilors have missions. {unassigned} unassigned";
+                }
+
+                // Request confirmation
+                ConfirmationHelper.RequestConfirmation(
+                    "Confirm assignments",
+                    statusMessage,
+                    EnterSelectionMode,
+                    onConfirm: () => PerformConfirmAssignments(faction),
+                    onCancel: () => TISpeechMod.Speak("Cancelled", interrupt: true)
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in HandleConfirmAssignments: {ex.Message}");
+                TISpeechMod.Speak("Error checking assignments", interrupt: true);
+            }
+        }
+
+        private void PerformConfirmAssignments(TIFactionState faction)
+        {
+            try
+            {
+                var action = new FinalizeCouncilorMissions(faction);
+                faction.playerControl.StartAction(action);
+
+                TISpeechMod.Speak("Assignments confirmed. Missions will now execute.", interrupt: true);
+                MelonLogger.Msg("Confirmed councilor mission assignments via review mode");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error confirming assignments: {ex.Message}");
+                TISpeechMod.Speak("Error confirming assignments", interrupt: true);
+            }
         }
 
         #endregion
