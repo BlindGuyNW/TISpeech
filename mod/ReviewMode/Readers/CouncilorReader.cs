@@ -24,6 +24,21 @@ namespace TISpeech.ReviewMode.Readers
         /// </summary>
         public Action<TICouncilorState> OnToggleAutomation { get; set; }
 
+        /// <summary>
+        /// Callback for applying an augmentation (spending XP).
+        /// </summary>
+        public Action<TICouncilorState, CouncilorAugmentationOption> OnApplyAugmentation { get; set; }
+
+        /// <summary>
+        /// Callback for managing an org (show actions menu).
+        /// </summary>
+        public Action<TICouncilorState, TIOrgState> OnManageOrg { get; set; }
+
+        /// <summary>
+        /// Callback for acquiring a new org for this councilor.
+        /// </summary>
+        public Action<TICouncilorState> OnAcquireOrg { get; set; }
+
         public string ReadSummary(TICouncilorState councilor)
         {
             if (councilor == null)
@@ -125,16 +140,24 @@ namespace TISpeech.ReviewMode.Readers
             infoSection.AddItem("Location", GetLocationString(councilor));
             sections.Add(infoSection);
 
-            // Stats section
+            // Stats section - with detailed tooltips from game
             var statsSection = new DataSection("Stats");
-            statsSection.AddItem("Persuasion", councilor.GetAttribute(CouncilorAttribute.Persuasion).ToString());
-            statsSection.AddItem("Investigation", councilor.GetAttribute(CouncilorAttribute.Investigation).ToString());
-            statsSection.AddItem("Espionage", councilor.GetAttribute(CouncilorAttribute.Espionage).ToString());
-            statsSection.AddItem("Command", councilor.GetAttribute(CouncilorAttribute.Command).ToString());
-            statsSection.AddItem("Administration", councilor.GetAttribute(CouncilorAttribute.Administration).ToString());
-            statsSection.AddItem("Science", councilor.GetAttribute(CouncilorAttribute.Science).ToString());
-            statsSection.AddItem("Security", councilor.GetAttribute(CouncilorAttribute.Security).ToString());
-            statsSection.AddItem("Loyalty", councilor.GetAttribute(CouncilorAttribute.Loyalty).ToString());
+            statsSection.AddItem("Persuasion", councilor.GetAttribute(CouncilorAttribute.Persuasion).ToString(),
+                GetStatDetailText(councilor, CouncilorAttribute.Persuasion));
+            statsSection.AddItem("Investigation", councilor.GetAttribute(CouncilorAttribute.Investigation).ToString(),
+                GetStatDetailText(councilor, CouncilorAttribute.Investigation));
+            statsSection.AddItem("Espionage", councilor.GetAttribute(CouncilorAttribute.Espionage).ToString(),
+                GetStatDetailText(councilor, CouncilorAttribute.Espionage));
+            statsSection.AddItem("Command", councilor.GetAttribute(CouncilorAttribute.Command).ToString(),
+                GetStatDetailText(councilor, CouncilorAttribute.Command));
+            statsSection.AddItem("Administration", councilor.GetAttribute(CouncilorAttribute.Administration).ToString(),
+                GetStatDetailText(councilor, CouncilorAttribute.Administration));
+            statsSection.AddItem("Science", councilor.GetAttribute(CouncilorAttribute.Science).ToString(),
+                GetStatDetailText(councilor, CouncilorAttribute.Science));
+            statsSection.AddItem("Security", councilor.GetAttribute(CouncilorAttribute.Security).ToString(),
+                GetStatDetailText(councilor, CouncilorAttribute.Security));
+            statsSection.AddItem("Loyalty", councilor.GetAttribute(CouncilorAttribute.Loyalty).ToString(),
+                GetStatDetailText(councilor, CouncilorAttribute.Loyalty));
             sections.Add(statsSection);
 
             // Traits section - with full descriptions available via detail read
@@ -150,16 +173,9 @@ namespace TISpeech.ReviewMode.Readers
                 sections.Add(traitsSection);
             }
 
-            // Orgs section
-            if (councilor.orgs != null && councilor.orgs.Count > 0)
-            {
-                var orgsSection = new DataSection("Organizations");
-                foreach (var org in councilor.orgs)
-                {
-                    orgsSection.AddItem(org.displayName);
-                }
-                sections.Add(orgsSection);
-            }
+            // Orgs section - now actionable
+            var orgsSection = BuildOrganizationsSection(councilor);
+            sections.Add(orgsSection);
 
             // Missions section (actionable)
             var missionsSection = BuildMissionsSection(councilor);
@@ -176,6 +192,13 @@ namespace TISpeech.ReviewMode.Readers
                 OnToggleAutomation?.Invoke(councilor);
             });
             sections.Add(automationSection);
+
+            // Spend XP section
+            var xpSection = BuildSpendXPSection(councilor);
+            if (xpSection.ItemCount > 0)
+            {
+                sections.Add(xpSection);
+            }
 
             return sections;
         }
@@ -240,6 +263,172 @@ namespace TISpeech.ReviewMode.Readers
             {
                 return "Unknown location";
             }
+        }
+
+        private string GetStatDetailText(TICouncilorState councilor, CouncilorAttribute attribute)
+        {
+            try
+            {
+                // Use the game's built-in stat detail method
+                string detail = CouncilGridController.StatDetail(councilor, attribute);
+                return TISpeechMod.CleanText(detail);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error getting stat detail for {attribute}: {ex.Message}");
+                return "";
+            }
+        }
+
+        private DataSection BuildOrganizationsSection(TICouncilorState councilor)
+        {
+            var orgsSection = new DataSection("Organizations");
+
+            try
+            {
+                // Show org capacity
+                int currentOrgs = councilor.orgs?.Count ?? 0;
+                int capacity = councilor.GetAttribute(CouncilorAttribute.Administration);
+                orgsSection.AddItem("Org Capacity", $"{currentOrgs}/{capacity}");
+
+                // Add each existing org (activatable to manage)
+                if (councilor.orgs != null)
+                {
+                    foreach (var org in councilor.orgs)
+                    {
+                        var orgCopy = org;
+                        var councilorCopy = councilor;
+
+                        // Build detail text with org bonuses
+                        string detail = GetOrgDetailText(org);
+
+                        orgsSection.AddItem(org.displayName, $"Tier {org.tier}", detail, onActivate: () =>
+                        {
+                            OnManageOrg?.Invoke(councilorCopy, orgCopy);
+                        });
+                    }
+                }
+
+                // Add "Acquire Organization" option if there's capacity
+                if (currentOrgs < capacity)
+                {
+                    var councilorCopy = councilor;
+                    orgsSection.AddItem("Acquire Organization", "Browse available orgs", onActivate: () =>
+                    {
+                        OnAcquireOrg?.Invoke(councilorCopy);
+                    });
+                }
+                else
+                {
+                    orgsSection.AddItem("Acquire Organization", "At capacity - cannot acquire more orgs");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error building organizations section: {ex.Message}");
+                orgsSection.AddItem("Error loading organizations");
+            }
+
+            return orgsSection;
+        }
+
+        private string GetOrgDetailText(TIOrgState org)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Organization: {org.displayName}");
+            sb.AppendLine($"Tier: {org.tier}");
+
+            if (org.template != null)
+            {
+                sb.AppendLine($"Type: {org.template.orgType}");
+            }
+
+            // Key bonuses
+            if (org.incomeMoney_month != 0) sb.AppendLine($"Money/month: {org.incomeMoney_month:+#;-#;0}");
+            if (org.incomeInfluence_month != 0) sb.AppendLine($"Influence/month: {org.incomeInfluence_month:+#;-#;0}");
+            if (org.incomeOps_month != 0) sb.AppendLine($"Operations/month: {org.incomeOps_month:+#;-#;0}");
+            if (org.incomeResearch_month != 0) sb.AppendLine($"Research/month: {org.incomeResearch_month:+#;-#;0}");
+
+            // Stat bonuses
+            if (org.persuasion != 0) sb.AppendLine($"Persuasion: {org.persuasion:+#;-#;0}");
+            if (org.command != 0) sb.AppendLine($"Command: {org.command:+#;-#;0}");
+            if (org.investigation != 0) sb.AppendLine($"Investigation: {org.investigation:+#;-#;0}");
+            if (org.espionage != 0) sb.AppendLine($"Espionage: {org.espionage:+#;-#;0}");
+            if (org.administration != 0) sb.AppendLine($"Administration: {org.administration:+#;-#;0}");
+            if (org.science != 0) sb.AppendLine($"Science: {org.science:+#;-#;0}");
+            if (org.security != 0) sb.AppendLine($"Security: {org.security:+#;-#;0}");
+
+            return sb.ToString();
+        }
+
+        private DataSection BuildSpendXPSection(TICouncilorState councilor)
+        {
+            var xpSection = new DataSection("Spend XP");
+
+            try
+            {
+                // Show current XP
+                int currentXP = councilor.XP;
+                xpSection.AddItem("Available XP", currentXP.ToString());
+
+                // Get all candidate augmentations
+                var augmentations = councilor.GetCandidateAugmentations();
+
+                foreach (var aug in augmentations)
+                {
+                    try
+                    {
+                        // Get display strings from the game API
+                        aug.SetAugmentationStrings(out string description1, out string description2, out string tooltipDescription, out string costString);
+
+                        // Clean text for screen reader
+                        string label = TISpeechMod.CleanText(description1);
+                        string value = TISpeechMod.CleanText(description2);
+                        string detail = TISpeechMod.CleanText(tooltipDescription);
+                        string cost = TISpeechMod.CleanText(costString);
+
+                        // Build the item label
+                        string itemLabel = !string.IsNullOrEmpty(value) ? $"{label}: {value}" : label;
+
+                        // Check affordability
+                        bool canAfford = aug.CouncilorCanAfford(councilor);
+
+                        if (canAfford)
+                        {
+                            // Affordable - make it activatable
+                            var augCopy = aug; // Capture for closure
+                            var councilorCopy = councilor;
+
+                            xpSection.AddItem(itemLabel, cost, detail, onActivate: () =>
+                            {
+                                OnApplyAugmentation?.Invoke(councilorCopy, augCopy);
+                            });
+                        }
+                        else
+                        {
+                            // Not affordable - show as read-only with reason
+                            string notAffordableValue = $"Cannot afford: {cost} (have {currentXP} XP)";
+                            xpSection.AddItem(itemLabel, notAffordableValue, detail);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Warning($"Error processing augmentation option: {ex.Message}");
+                    }
+                }
+
+                if (xpSection.ItemCount <= 1) // Only the "Available XP" item
+                {
+                    xpSection.AddItem("No augmentations available");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error building Spend XP section: {ex.Message}");
+                xpSection.AddItem("Error loading augmentations");
+            }
+
+            return xpSection;
         }
     }
 }

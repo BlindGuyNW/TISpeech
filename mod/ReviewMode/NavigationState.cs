@@ -22,6 +22,19 @@ namespace TISpeech.ReviewMode
     }
 
     /// <summary>
+    /// Result of a drill-down operation.
+    /// </summary>
+    public enum DrillResult
+    {
+        /// <summary>Successfully drilled into a deeper navigation level</summary>
+        Drilled,
+        /// <summary>Activated an item action (no navigation change)</summary>
+        Activated,
+        /// <summary>Could not drill or activate</summary>
+        Nothing
+    }
+
+    /// <summary>
     /// Manages hierarchical navigation state for review mode.
     /// Tracks current position at each level and handles drill-down/back-out navigation.
     /// </summary>
@@ -189,9 +202,9 @@ namespace TISpeech.ReviewMode
 
         /// <summary>
         /// Drill down into the current selection.
-        /// Returns true if drill-down was successful.
+        /// Returns DrillResult indicating what happened.
         /// </summary>
-        public bool DrillDown()
+        public DrillResult DrillDown()
         {
             switch (currentLevel)
             {
@@ -201,7 +214,7 @@ namespace TISpeech.ReviewMode
                         currentLevel = NavigationLevel.Items;
                         currentItemIndex = 0;
                         currentSections = null;
-                        return true;
+                        return DrillResult.Drilled;
                     }
                     break;
 
@@ -214,7 +227,7 @@ namespace TISpeech.ReviewMode
                             currentLevel = NavigationLevel.Sections;
                             currentSectionIndex = 0;
                             currentSectionItemIndex = 0;
-                            return true;
+                            return DrillResult.Drilled;
                         }
                     }
                     break;
@@ -224,7 +237,7 @@ namespace TISpeech.ReviewMode
                     {
                         currentLevel = NavigationLevel.SectionItems;
                         currentSectionItemIndex = 0;
-                        return true;
+                        return DrillResult.Drilled;
                     }
                     break;
 
@@ -252,7 +265,7 @@ namespace TISpeech.ReviewMode
                                     currentSectionIndex = 0;
                                     currentSectionItemIndex = 0;
                                     currentLevel = NavigationLevel.Sections;
-                                    return true;
+                                    return DrillResult.Drilled;
                                 }
                             }
                         }
@@ -261,12 +274,12 @@ namespace TISpeech.ReviewMode
                         if (CurrentSection.CanActivate(currentSectionItemIndex))
                         {
                             CurrentSection.Activate(currentSectionItemIndex);
-                            return true;
+                            return DrillResult.Activated;
                         }
                     }
                     break;
             }
-            return false;
+            return DrillResult.Nothing;
         }
 
         /// <summary>

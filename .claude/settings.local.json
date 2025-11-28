@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(./build_and_deploy.bat)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dir \"C:\\git\\TISpeech\\decompiled\" /s /b)",
+      "Bash(findstr:*)",
+      "Bash(xargs basename:*)",
+      "Bash(dir \"C:\\git\\TISpeech\\mod\\ReviewMode\" /s)"
     ],
     "deny": [],
     "ask": []

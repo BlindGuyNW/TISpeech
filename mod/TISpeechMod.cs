@@ -177,6 +177,22 @@ namespace TISpeech
             text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""population"">", " Population ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""nukes"">", " Nuclear Weapons ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
+            // Replace nation stat sprite icons with text labels
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""democracy"">", " Democracy ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""gov_type"">", " Democracy ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""unrest"">", " Unrest ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""inequality"">", " Inequality ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""gdp"">", " GDP ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""cohesion"">", " Cohesion ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""miltech"">", " Miltech ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""education"">", " Education ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            // Replace misc UI sprite icons
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""xp"">", " XP ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""star"">", " ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""warning"">", " Warning: ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"<sprite\s+name=""space_combat_score"">", " Combat Score ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
             // Remove remaining TextMeshPro and HTML tags
             text = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]+>", "");
 

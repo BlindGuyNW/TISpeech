@@ -30,6 +30,7 @@ namespace TISpeech.ReviewMode
         private CouncilScreen councilScreen;
         private TechnologyScreen technologyScreen;
         private NationScreen nationScreen;
+        private OrgMarketScreen orgMarketScreen;
 
         // Selection sub-mode (for multi-step actions like mission assignment)
         private SelectionSubMode selectionMode = null;
@@ -92,12 +93,17 @@ namespace TISpeech.ReviewMode
             nationScreen.OnEnterSelectionMode = EnterSelectionMode;
             nationScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
+            orgMarketScreen = new OrgMarketScreen();
+            orgMarketScreen.OnEnterSelectionMode = EnterSelectionMode;
+            orgMarketScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
             // Register screens with navigation
             var screens = new List<ScreenBase>
             {
                 councilScreen,
                 technologyScreen,
-                nationScreen
+                nationScreen,
+                orgMarketScreen
             };
 
             navigation.RegisterScreens(screens);
@@ -248,14 +254,20 @@ namespace TISpeech.ReviewMode
             // Drill down / Activate (Numpad Enter or Numpad 5)
             if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
             {
-                if (navigation.DrillDown())
+                var result = navigation.DrillDown();
+                switch (result)
                 {
-                    TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
-                }
-                else
-                {
-                    // At deepest level with no further action
-                    TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                    case DrillResult.Drilled:
+                        // Actually drilled into a new level - announce new position
+                        TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                        break;
+                    case DrillResult.Activated:
+                        // Item was activated - don't re-announce, the action handles its own speech
+                        break;
+                    case DrillResult.Nothing:
+                        // Couldn't drill or activate - re-read current position
+                        TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                        break;
                 }
                 return true;
             }
@@ -385,8 +397,10 @@ namespace TISpeech.ReviewMode
             }
 
             selectionMode = new SelectionSubMode(prompt, options, onSelect);
-            TISpeechMod.Speak($"{prompt}. {options.Count} options. Use up/down to browse, Enter to select, * for detail, Escape to cancel.", interrupt: true);
-            AnnounceSelectionItem();
+            var firstOption = selectionMode.CurrentOption;
+            // Combine prompt with first item into single announcement to avoid interruption
+            string announcement = $"{prompt}. {options.Count} options. 1 of {options.Count}: {firstOption.Label}. Use up/down to browse, Enter to select, * for detail, Escape to cancel.";
+            TISpeechMod.Speak(announcement, interrupt: true);
         }
 
         private void AnnounceSelectionItem()
