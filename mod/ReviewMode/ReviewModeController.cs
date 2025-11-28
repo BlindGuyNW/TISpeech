@@ -29,6 +29,7 @@ namespace TISpeech.ReviewMode
         // Available screens
         private CouncilScreen councilScreen;
         private TechnologyScreen technologyScreen;
+        private NationScreen nationScreen;
 
         // Selection sub-mode (for multi-step actions like mission assignment)
         private SelectionSubMode selectionMode = null;
@@ -87,11 +88,16 @@ namespace TISpeech.ReviewMode
             technologyScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
             technologyScreen.OnSectionsInvalidated = () => navigation.RefreshSections();
 
+            nationScreen = new NationScreen();
+            nationScreen.OnEnterSelectionMode = EnterSelectionMode;
+            nationScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
             // Register screens with navigation
             var screens = new List<ScreenBase>
             {
                 councilScreen,
-                technologyScreen
+                technologyScreen,
+                nationScreen
             };
 
             navigation.RegisterScreens(screens);
