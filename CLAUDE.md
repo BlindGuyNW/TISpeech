@@ -410,16 +410,16 @@ Used for multi-step actions like mission assignment:
 
 #### Review Mode Keyboard Controls
 
-| Key | Action |
-|-----|--------|
-| Numpad 0 | Toggle review mode on/off |
-| Numpad 8/2 | Navigate previous/next at current level |
-| Numpad Enter or 5 | Drill down or activate |
-| Escape | Back out one level (or exit at top) |
-| Numpad * | Read detailed info |
-| Numpad / | List all items at current level |
-| PageUp/Down | Quick screen switching |
-| Numpad + | Confirm mission assignments (global) |
+| Action | Numpad | Laptop Alternative |
+|--------|--------|-------------------|
+| Toggle review mode | Numpad 0 | Ctrl+R |
+| Navigate prev/next | Numpad 8/2 | Up/Down arrows |
+| Drill down/activate | Numpad Enter or 5 | Enter or Right arrow |
+| Back out | - | Escape, Left arrow, Backspace |
+| Read detailed info | Numpad * | `-` (minus/dash) |
+| List all items | Numpad / | `=` (equals) |
+| Screen switching | PageUp/Down | PageUp/Down |
+| Confirm assignments | Numpad + | `\` (backslash) |
 
 ### Accessibility Command Hotkeys
 

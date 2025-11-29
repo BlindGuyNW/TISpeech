@@ -20,6 +20,7 @@ namespace TISpeech
         private static bool altDPressed = false;
         private static bool altOPressed = false;
         private static bool numpad0Pressed = false;
+        private static bool ctrlRPressed = false;
 
         /// <summary>
         /// Check for accessibility keyboard commands each frame
@@ -46,6 +47,21 @@ namespace TISpeech
                 else if (!Input.GetKey(KeyCode.Keypad0))
                 {
                     numpad0Pressed = false;
+                }
+
+                // Ctrl+R - Toggle review mode (laptop-friendly alternative)
+                bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+                if (ctrlHeld && Input.GetKeyDown(KeyCode.R))
+                {
+                    if (!ctrlRPressed)
+                    {
+                        ctrlRPressed = true;
+                        ToggleReviewMode();
+                    }
+                }
+                else if (!Input.GetKey(KeyCode.R))
+                {
+                    ctrlRPressed = false;
                 }
 
                 // Alt+S - Screen info/status

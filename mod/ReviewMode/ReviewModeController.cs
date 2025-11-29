@@ -209,7 +209,7 @@ namespace TISpeech.ReviewMode
                 if (screen != null)
                 {
                     string announcement = $"Review mode. {screen.GetActivationAnnouncement()} ";
-                    announcement += "Use Numpad 8/2 to navigate, Enter to drill in, Escape to back out.";
+                    announcement += "Use arrows or Numpad to navigate, Enter to drill in, Escape to back out.";
                     TISpeechMod.Speak(announcement, interrupt: true);
                 }
                 else
@@ -252,16 +252,16 @@ namespace TISpeech.ReviewMode
 
         private bool HandleNavigationInput()
         {
-            // Navigate up/previous (Numpad 8)
-            if (Input.GetKeyDown(KeyCode.Keypad8))
+            // Navigate up/previous (Numpad 8, Up arrow)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
             {
                 navigation.Previous();
                 TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
                 return true;
             }
 
-            // Navigate down/next (Numpad 2)
-            if (Input.GetKeyDown(KeyCode.Keypad2))
+            // Navigate down/next (Numpad 2, Down arrow)
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
             {
                 navigation.Next();
                 TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
@@ -282,8 +282,9 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Drill down / Activate (Numpad Enter or Numpad 5)
-            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
+            // Drill down / Activate (Numpad Enter, Numpad 5, Enter, Right arrow)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow))
             {
                 var result = navigation.DrillDown();
                 switch (result)
@@ -313,8 +314,8 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Back out (Escape only - Numpad 0 is used for toggle)
-            if (Input.GetKeyDown(KeyCode.Escape))
+            // Back out (Escape, Left arrow, Backspace)
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
             {
                 if (navigation.BackOut())
                 {
@@ -328,15 +329,15 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Read detail (Numpad *)
-            if (Input.GetKeyDown(KeyCode.KeypadMultiply))
+            // Read detail (Numpad *, Minus/Dash key)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
             {
                 TISpeechMod.Speak(navigation.GetCurrentDetail(), interrupt: true);
                 return true;
             }
 
-            // List items at current level (Numpad /)
-            if (Input.GetKeyDown(KeyCode.KeypadDivide))
+            // List items at current level (Numpad /, Equals key)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
             {
                 TISpeechMod.Speak(navigation.ListCurrentLevel(), interrupt: true);
                 return true;
@@ -375,8 +376,8 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Confirm Assignments (Numpad +) - global action during mission phase
-            if (Input.GetKeyDown(KeyCode.KeypadPlus))
+            // Confirm Assignments (Numpad +, Backslash) - global action during mission phase
+            if (Input.GetKeyDown(KeyCode.KeypadPlus) || Input.GetKeyDown(KeyCode.Backslash))
             {
                 HandleConfirmAssignments();
                 return true;
@@ -477,36 +478,37 @@ namespace TISpeech.ReviewMode
 
         private bool HandleSelectionModeInput()
         {
-            // Navigate options (Numpad 8/2 or 4/6)
-            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4))
+            // Navigate options (Numpad 8/2, Numpad 4/6, Up/Down arrows)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.UpArrow))
             {
                 selectionMode.Previous();
                 AnnounceSelectionItem();
                 return true;
             }
-            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6))
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.DownArrow))
             {
                 selectionMode.Next();
                 AnnounceSelectionItem();
                 return true;
             }
 
-            // Confirm selection (Enter)
-            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
+            // Confirm selection (Numpad Enter, Numpad 5, Enter)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) || Input.GetKeyDown(KeyCode.Return))
             {
                 ConfirmSelection();
                 return true;
             }
 
-            // Cancel (Escape or Numpad 0)
-            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Keypad0))
+            // Cancel (Escape, Numpad 0, Left arrow, Backspace)
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Keypad0) ||
+                Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
             {
                 CancelSelection();
                 return true;
             }
 
-            // Read detail (Numpad *) - show full modifier breakdown
-            if (Input.GetKeyDown(KeyCode.KeypadMultiply))
+            // Read detail (Numpad *, Minus) - show full modifier breakdown
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
             {
                 AnnounceSelectionDetail();
                 return true;
@@ -534,8 +536,8 @@ namespace TISpeech.ReviewMode
 
         private bool HandleGridModeInput()
         {
-            // Navigation: Numpad 8/2 for rows (priorities), 4/6 for columns (CPs)
-            if (Input.GetKeyDown(KeyCode.Keypad8))
+            // Navigation: Numpad 8/2 or Up/Down for rows (priorities), Numpad 4/6 or Left/Right for columns (CPs)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
             {
                 if (gridMode.MoveUp())
                     TISpeechMod.Speak(gridMode.GetCellAnnouncement(), interrupt: true);
@@ -543,7 +545,7 @@ namespace TISpeech.ReviewMode
                     TISpeechMod.Speak($"First priority: {gridMode.Grid.GetRowHeader(0)}", interrupt: true);
                 return true;
             }
-            if (Input.GetKeyDown(KeyCode.Keypad2))
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
             {
                 if (gridMode.MoveDown())
                     TISpeechMod.Speak(gridMode.GetCellAnnouncement(), interrupt: true);
@@ -551,7 +553,7 @@ namespace TISpeech.ReviewMode
                     TISpeechMod.Speak($"Last priority: {gridMode.Grid.GetRowHeader(gridMode.RowCount - 1)}", interrupt: true);
                 return true;
             }
-            if (Input.GetKeyDown(KeyCode.Keypad4))
+            if (Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.LeftArrow))
             {
                 if (gridMode.MoveLeft())
                     TISpeechMod.Speak(gridMode.GetCellAnnouncement(), interrupt: true);
@@ -559,7 +561,7 @@ namespace TISpeech.ReviewMode
                     TISpeechMod.Speak("First control point", interrupt: true);
                 return true;
             }
-            if (Input.GetKeyDown(KeyCode.Keypad6))
+            if (Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.RightArrow))
             {
                 if (gridMode.MoveRight())
                     TISpeechMod.Speak(gridMode.GetCellAnnouncement(), interrupt: true);
@@ -568,8 +570,8 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Edit cell: Enter to increment, Numpad - to decrement
-            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
+            // Edit cell: Enter to increment, Numpad - or Minus to decrement
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) || Input.GetKeyDown(KeyCode.Return))
             {
                 if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
                 {
@@ -595,15 +597,15 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Row summary: Numpad *
+            // Row summary: Numpad * (note: Minus is used for decrement in grid mode)
             if (Input.GetKeyDown(KeyCode.KeypadMultiply))
             {
                 TISpeechMod.Speak(gridMode.GetRowSummary(), interrupt: true);
                 return true;
             }
 
-            // Column summary: Numpad /
-            if (Input.GetKeyDown(KeyCode.KeypadDivide))
+            // Column summary: Numpad /, Equals
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
             {
                 TISpeechMod.Speak(gridMode.GetColumnSummary(), interrupt: true);
                 return true;
@@ -719,22 +721,22 @@ namespace TISpeech.ReviewMode
         {
             if (notificationMode == null) return false;
 
-            // Navigate options (Numpad 8/2 or 4/6)
-            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4))
+            // Navigate options (Numpad 8/2, Numpad 4/6, Up/Down arrows)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.UpArrow))
             {
                 notificationMode.Previous();
                 TISpeechMod.Speak(notificationMode.GetCurrentAnnouncement(), interrupt: true);
                 return true;
             }
-            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6))
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.DownArrow))
             {
                 notificationMode.Next();
                 TISpeechMod.Speak(notificationMode.GetCurrentAnnouncement(), interrupt: true);
                 return true;
             }
 
-            // Activate selected option (Enter or Numpad 5)
-            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
+            // Activate selected option (Numpad Enter, Numpad 5, Enter)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) || Input.GetKeyDown(KeyCode.Return))
             {
                 var option = notificationMode.CurrentOption;
                 if (option != null)
@@ -747,15 +749,15 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Read current option detail (Numpad *)
-            if (Input.GetKeyDown(KeyCode.KeypadMultiply))
+            // Read current option detail (Numpad *, Minus)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
             {
                 TISpeechMod.Speak(notificationMode.GetCurrentDetail(), interrupt: true);
                 return true;
             }
 
-            // List all options (Numpad /)
-            if (Input.GetKeyDown(KeyCode.KeypadDivide))
+            // List all options (Numpad /, Equals)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
             {
                 TISpeechMod.Speak(notificationMode.ListAllOptions(), interrupt: true);
                 return true;
@@ -773,8 +775,9 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Block Numpad 0 (don't allow exiting Review Mode while notification is open)
-            if (Input.GetKeyDown(KeyCode.Keypad0))
+            // Block exit keys (don't allow exiting Review Mode while notification is open)
+            if (Input.GetKeyDown(KeyCode.Keypad0) ||
+                ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.R)))
             {
                 TISpeechMod.Speak("Cannot exit Review Mode while notification is open. Use Enter to select an option, or Escape to close.", interrupt: true);
                 return true;
@@ -839,22 +842,22 @@ namespace TISpeech.ReviewMode
         {
             if (policyMode == null) return false;
 
-            // Navigate options (Numpad 8/2 or 4/6)
-            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4))
+            // Navigate options (Numpad 8/2, Numpad 4/6, Up/Down arrows)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.UpArrow))
             {
                 policyMode.Previous();
                 TISpeechMod.Speak(policyMode.GetCurrentAnnouncement(), interrupt: true);
                 return true;
             }
-            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6))
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.DownArrow))
             {
                 policyMode.Next();
                 TISpeechMod.Speak(policyMode.GetCurrentAnnouncement(), interrupt: true);
                 return true;
             }
 
-            // Activate selected option (Enter or Numpad 5)
-            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
+            // Activate selected option (Numpad Enter, Numpad 5, Enter)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) || Input.GetKeyDown(KeyCode.Return))
             {
                 bool continueMode = policyMode.Activate();
                 if (!continueMode)
@@ -865,22 +868,22 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Read current option detail (Numpad *)
-            if (Input.GetKeyDown(KeyCode.KeypadMultiply))
+            // Read current option detail (Numpad *, Minus)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
             {
                 TISpeechMod.Speak(policyMode.GetCurrentDetail(), interrupt: true);
                 return true;
             }
 
-            // List all options (Numpad /)
-            if (Input.GetKeyDown(KeyCode.KeypadDivide))
+            // List all options (Numpad /, Equals)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
             {
                 TISpeechMod.Speak(policyMode.ListAll(), interrupt: true);
                 return true;
             }
 
-            // Go back (Escape)
-            if (Input.GetKeyDown(KeyCode.Escape))
+            // Go back (Escape, Left arrow, Backspace)
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
             {
                 bool stayInMode = policyMode.GoBack();
                 if (!stayInMode)
@@ -892,8 +895,9 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Block Numpad 0 (don't allow exiting Review Mode while in policy selection)
-            if (Input.GetKeyDown(KeyCode.Keypad0))
+            // Block exit keys (don't allow exiting Review Mode while in policy selection)
+            if (Input.GetKeyDown(KeyCode.Keypad0) ||
+                ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.R)))
             {
                 TISpeechMod.Speak("Cannot exit Review Mode during policy selection. Press Escape to cancel.", interrupt: true);
                 return true;
@@ -1153,7 +1157,7 @@ namespace TISpeech.ReviewMode
             selectionMode = new SelectionSubMode(prompt, options, onSelect);
             var firstOption = selectionMode.CurrentOption;
             // Combine prompt with first item into single announcement to avoid interruption
-            string announcement = $"{prompt}. {options.Count} options. 1 of {options.Count}: {firstOption.Label}. Use up/down to browse, Enter to select, * for detail, Escape to cancel.";
+            string announcement = $"{prompt}. {options.Count} options. 1 of {options.Count}: {firstOption.Label}. Use arrows to browse, Enter to select, minus for detail, Escape to cancel.";
             TISpeechMod.Speak(announcement, interrupt: true);
         }
 
