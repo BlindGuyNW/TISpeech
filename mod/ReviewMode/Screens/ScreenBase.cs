@@ -5,6 +5,17 @@ using TISpeech.ReviewMode.Sections;
 namespace TISpeech.ReviewMode.Screens
 {
     /// <summary>
+    /// View mode for screens that support browsing all items vs only player-owned items.
+    /// </summary>
+    public enum ViewMode
+    {
+        /// <summary>Only show items owned/controlled by the player</summary>
+        Mine,
+        /// <summary>Show all items in the game</summary>
+        All
+    }
+
+    /// <summary>
     /// Base class for review mode screens.
     /// Each screen represents a high-level category (Council, Nations, Research, etc.)
     /// and provides navigation through its items and sections.
@@ -15,6 +26,32 @@ namespace TISpeech.ReviewMode.Screens
         /// Display name of the screen (e.g., "Council", "Nations")
         /// </summary>
         public abstract string Name { get; }
+
+        /// <summary>
+        /// Whether this screen supports switching between Mine/All view modes.
+        /// Override and return true if the screen can show all game objects.
+        /// </summary>
+        public virtual bool SupportsViewModeToggle => false;
+
+        /// <summary>
+        /// Current view mode. Only relevant if SupportsViewModeToggle is true.
+        /// </summary>
+        public virtual ViewMode CurrentViewMode { get; set; } = ViewMode.Mine;
+
+        /// <summary>
+        /// Toggle view mode between Mine and All.
+        /// Returns announcement text describing the new mode.
+        /// </summary>
+        public virtual string ToggleViewMode()
+        {
+            if (!SupportsViewModeToggle)
+                return "This screen does not support view mode toggle";
+
+            CurrentViewMode = CurrentViewMode == ViewMode.Mine ? ViewMode.All : ViewMode.Mine;
+            Refresh();
+            string modeName = CurrentViewMode == ViewMode.Mine ? "Your items" : "All items";
+            return $"{modeName}. {ItemCount} items.";
+        }
 
         /// <summary>
         /// Short description shown when screen is announced
@@ -94,9 +131,85 @@ namespace TISpeech.ReviewMode.Screens
         public virtual string GetActivationAnnouncement()
         {
             int count = ItemCount;
+            string viewModeInfo = SupportsViewModeToggle
+                ? (CurrentViewMode == ViewMode.Mine ? " (your items, Tab to show all)" : " (all items, Tab to show yours)")
+                : "";
             if (!string.IsNullOrEmpty(Description))
-                return $"{Name} screen. {Description}. {count} items.";
-            return $"{Name} screen. {count} items.";
+                return $"{Name} screen. {Description}.{viewModeInfo} {count} items.";
+            return $"{Name} screen.{viewModeInfo} {count} items.";
+        }
+
+        /// <summary>
+        /// Whether this screen supports letter navigation (pressing A-Z to jump to items).
+        /// Override and return true for screens with alphabetically-sorted items.
+        /// </summary>
+        public virtual bool SupportsLetterNavigation => false;
+
+        /// <summary>
+        /// Get the display name of an item for letter navigation purposes.
+        /// Override to return the sortable name of the item at the given index.
+        /// </summary>
+        public virtual string GetItemSortName(int index)
+        {
+            return ReadItemSummary(index);
+        }
+
+        /// <summary>
+        /// Find the index of the first item starting with the given letter.
+        /// Returns -1 if no item found.
+        /// </summary>
+        public virtual int FindItemByLetter(char letter)
+        {
+            if (!SupportsLetterNavigation)
+                return -1;
+
+            letter = char.ToUpperInvariant(letter);
+            var items = GetItems();
+            if (items == null || items.Count == 0)
+                return -1;
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                string name = GetItemSortName(i);
+                if (!string.IsNullOrEmpty(name) && char.ToUpperInvariant(name[0]) == letter)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// Find the next item starting with the given letter after the current index.
+        /// If no more items with that letter exist, wraps to the first one.
+        /// Returns -1 if no item found.
+        /// </summary>
+        public virtual int FindNextItemByLetter(char letter, int currentIndex)
+        {
+            if (!SupportsLetterNavigation)
+                return -1;
+
+            letter = char.ToUpperInvariant(letter);
+            var items = GetItems();
+            if (items == null || items.Count == 0)
+                return -1;
+
+            // Search from current index + 1 to end
+            for (int i = currentIndex + 1; i < items.Count; i++)
+            {
+                string name = GetItemSortName(i);
+                if (!string.IsNullOrEmpty(name) && char.ToUpperInvariant(name[0]) == letter)
+                    return i;
+            }
+
+            // Wrap around: search from 0 to current index
+            for (int i = 0; i <= currentIndex; i++)
+            {
+                string name = GetItemSortName(i);
+                if (!string.IsNullOrEmpty(name) && char.ToUpperInvariant(name[0]) == letter)
+                    return i;
+            }
+
+            return -1;
         }
     }
 }

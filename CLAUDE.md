@@ -32,7 +32,18 @@ Output: `bin/Release/net472/TISpeechMod.dll`
 
 - **`mod/`** - Mod source code (our code)
   - `TISpeechMod.cs` - MelonLoader entry point, Tolk initialization, static helper methods
-  - `Patches/TooltipPatches.cs` - Harmony patches for ModelShark tooltip system
+  - `AccessibilityCommands.cs` - Global keyboard hotkeys (Alt+R for resources, etc.)
+  - `Patches/` - Harmony patches for UI accessibility
+    - `TooltipPatches.cs` - ModelShark tooltip system
+    - `UIControlPatches.cs` - Buttons and confirmation dialogs
+    - `CouncilorPatches.cs`, `ResearchPriorityPatches.cs`, etc. - Screen-specific patches
+  - `ReviewMode/` - Keyboard-only navigation system
+    - `ReviewModeController.cs` - Main controller (MonoBehaviour)
+    - `NavigationState.cs` - Hierarchical navigation state machine
+    - `ConfirmationHelper.cs` - Confirmation dialogs for actions
+    - `Screens/` - Screen implementations (CouncilScreen, TechnologyScreen, etc.)
+    - `Sections/` - Section interface and DataSection implementation
+    - `Readers/` - Game state to text converters (CouncilorReader, NationReader, etc.)
 - **`decompiled/`** - Decompiled Terra Invicta game code (read-only reference)
   - Used to understand game internals but NOT compiled into the mod
 - **`Tolk.cs`** - C# wrapper for Tolk screen reader library
@@ -334,6 +345,253 @@ The .csproj references game DLLs in specific locations:
 - **MelonLoader DLLs**: `$(GameDir)\MelonLoader\net35\` (note: net35, not net6)
 - **Game assemblies**: `$(GameDir)\TerraInvicta_Data\Managed\`
 - All references set `<Private>false</Private>` to prevent copying to output
+
+### Review Mode Architecture (Keyboard Navigation System)
+
+Review Mode is a keyboard-only navigation system that allows users to browse game information without using the mouse. It's activated with **Numpad 0** and provides hierarchical navigation through game data.
+
+#### Navigation Hierarchy
+
+Review Mode uses a 4-level hierarchy:
+1. **Screens** - High-level categories (Council, Technology, Nations, Org Market)
+2. **Items** - Objects within a screen (councilors, nations, etc.)
+3. **Sections** - Categories within an item (Stats, Missions, Organizations, etc.)
+4. **Section Items** - Individual items within a section (specific stats, available missions, etc.)
+
+#### Key Components
+
+**`ReviewModeController`** (`mod/ReviewMode/ReviewModeController.cs`)
+- Main entry point, attached as a Unity `MonoBehaviour`
+- Handles input routing (Numpad 8/2 for nav, Enter to drill, Escape to back out)
+- Manages selection sub-mode for multi-step actions (mission target selection)
+- Singleton pattern via `Create()` factory method
+
+**`NavigationState`** (`mod/ReviewMode/NavigationState.cs`)
+- Tracks current position at each navigation level
+- Handles `Next()`, `Previous()`, `DrillDown()`, `BackOut()` navigation
+- Manages section caching and refresh
+
+**`ScreenBase`** (`mod/ReviewMode/Screens/ScreenBase.cs`)
+- Abstract base class for all screens
+- Defines interface: `GetItems()`, `ReadItemSummary()`, `GetSectionsForItem()`
+- Concrete implementations: `CouncilScreen`, `TechnologyScreen`, `NationScreen`, `OrgMarketScreen`
+
+**`ISection`** (`mod/ReviewMode/Sections/ISection.cs`)
+- Interface for navigable sections within items
+- Methods: `ReadItem()`, `CanActivate()`, `Activate()`, `CanDrillIntoItem()`
+- Implemented by `DataSection` for most use cases
+
+**`IGameStateReader<T>`** (`mod/ReviewMode/Readers/IGameStateReader.cs`)
+- Interface for extracting accessible text from game state objects
+- Methods: `ReadSummary()`, `ReadDetail()`, `GetSections()`
+- Implementations: `CouncilorReader`, `NationReader`, `OrgReader`, `TechBrowserReader`, etc.
+
+#### Adding a New Screen
+
+1. Create a class extending `ScreenBase` in `mod/ReviewMode/Screens/`
+2. Implement `Name`, `GetItems()`, `ReadItemSummary()`, `ReadItemDetail()`, `GetSectionsForItem()`
+3. Register in `ReviewModeController.InitializeScreens()`
+4. Wire up any action callbacks (e.g., `OnEnterSelectionMode`, `OnSpeak`)
+
+#### Adding a New Reader
+
+1. Create a class implementing `IGameStateReader<T>` in `mod/ReviewMode/Readers/`
+2. Implement `ReadSummary()` for list navigation (short, one-line)
+3. Implement `ReadDetail()` for verbose reading (Numpad *)
+4. Implement `GetSections()` returning a list of `ISection` for item navigation
+
+#### Selection Sub-Mode
+
+Used for multi-step actions like mission assignment:
+1. Build a `List<SelectionOption>` with labels and data
+2. Call `OnEnterSelectionMode(prompt, options, callback)`
+3. User navigates options with Numpad 8/2, confirms with Enter
+4. Callback receives selected index to execute action
+
+#### Review Mode Keyboard Controls
+
+| Key | Action |
+|-----|--------|
+| Numpad 0 | Toggle review mode on/off |
+| Numpad 8/2 | Navigate previous/next at current level |
+| Numpad Enter or 5 | Drill down or activate |
+| Escape | Back out one level (or exit at top) |
+| Numpad * | Read detailed info |
+| Numpad / | List all items at current level |
+| PageUp/Down | Quick screen switching |
+| Numpad + | Confirm mission assignments (global) |
+
+### Accessibility Command Hotkeys
+
+Defined in `mod/AccessibilityCommands.cs`:
+- **Alt+R** - Read current faction resources (Money, Influence, Ops, Research, Boost)
+- **Alt+S** - Read screen info (under development)
+- **Alt+L** - List screen items (under development)
+- **Alt+D** - Read detailed selection (under development)
+- **Alt+O** - Read objectives (under development)
+
+### Intel System (Game Architecture)
+
+Terra Invicta has a comprehensive intel system that determines what information is visible about enemy factions, councilors, and assets. **Review Mode must respect this system** when expanding to "browse all" functionality.
+
+#### Intel Thresholds
+
+Intel is stored as a float (0.0 to 1.0+) and compared against thresholds defined in `TIGlobalConfig`:
+
+**Councilor Intel Levels:**
+| Threshold | Constant | What You See |
+|-----------|----------|--------------|
+| 0.10 | `intelToSeeNeutralPawn` | Someone exists at location |
+| 0.25 | `intelToSeeCouncilorBasicData` | Name, type, faction |
+| 0.50 | `intelToSeeCouncilorDetails` | Stats, traits |
+| 0.75 | `intelToSeeCouncilorMission` | Current mission |
+| 1.00 | `intelToSeeCouncilorSecrets` | Loyalty, turned status |
+
+**Faction Intel Levels:**
+| Threshold | Constant | What You See |
+|-----------|----------|--------------|
+| 0.25 | `intelToSeeFactionBasicData` | Leader, basic info |
+| 0.25 | `intelToSeeFactionResources` | Resource stockpiles |
+| 0.25 | `intelToSeeFactionUnassignedOrgs` | Org pool |
+| 0.50 | `intelToSeeFactionObjectives` | Goals |
+| 0.75 | `intelToSeeFactionProjects` | Active projects |
+
+**Space Asset Intel Levels:**
+| Threshold | Constant |
+|-----------|----------|
+| 0.10 | `intelToSeeSpaceAssetLocationandComposition` |
+| 0.50 | `intelToSeeFleetShipDetails` |
+| 0.80 | `intelToSeeSpaceAssetUndercoverEnemyCouncilors` |
+
+#### Key Intel API Methods
+
+Methods on `TIFactionState` for checking intel:
+
+```csharp
+// Core intel queries
+float GetIntel(TIGameState target)           // Current intel level
+float GetHighestIntel(TIGameState target)    // Highest intel ever achieved
+
+// Councilor convenience methods (check against thresholds)
+bool HasIntelOnCouncilorLocation(TICouncilorState councilor)   // Can see location
+bool HasIntelOnCouncilorBasicData(TICouncilorState councilor)  // >= 0.25
+bool HasIntelOnCouncilorDetails(TICouncilorState councilor)    // >= 0.50
+bool HasIntelOnCouncilorMission(TICouncilorState councilor)    // >= 0.75
+bool HasIntelOnCouncilorSecrets(TICouncilorState councilor)    // >= 1.00
+
+// Space asset methods
+bool HasIntelOnSpaceAssetLocation(TISpaceAssetState asset)
+bool Prospected(TISpaceBodyState spaceBody)  // Have we surveyed this body?
+```
+
+#### The CouncilorView Pattern
+
+The game uses a "view model" pattern in `CouncilorView.cs` that gates information based on intel. This is the pattern Review Mode readers should follow:
+
+```csharp
+// From CouncilorView.cs - example of intel-gated information
+if (!playerCouncil.HasIntelOnCouncilorBasicData(councilor))
+    return "Unknown Agent";
+
+if (!playerCouncil.HasIntelOnCouncilorDetails(councilor))
+    return "???";  // Hide stats until sufficient intel
+```
+
+#### Implementing Intel in Review Mode Readers
+
+When expanding Review Mode to browse non-owned objects, readers must check intel:
+
+```csharp
+public List<ISection> GetSections(TICouncilorState councilor, TIFactionState viewer)
+{
+    var sections = new List<ISection>();
+    bool isOwn = councilor.faction == viewer;
+
+    // Always show if we have basic data
+    if (isOwn || viewer.HasIntelOnCouncilorBasicData(councilor))
+    {
+        sections.Add(BuildInfoSection(councilor, viewer));
+    }
+
+    // Stats require Details level intel
+    if (isOwn || viewer.HasIntelOnCouncilorDetails(councilor))
+    {
+        sections.Add(BuildStatsSection(councilor));
+        sections.Add(BuildTraitsSection(councilor));
+    }
+
+    // Current mission requires Mission level intel
+    if (isOwn || viewer.HasIntelOnCouncilorMission(councilor))
+    {
+        sections.Add(BuildCurrentMissionSection(councilor));
+    }
+
+    // Loyalty/turned status requires Secrets level intel
+    if (isOwn || viewer.HasIntelOnCouncilorSecrets(councilor))
+    {
+        sections.Add(BuildLoyaltySection(councilor));
+    }
+
+    // Actions ONLY for own councilors - never for enemies
+    if (isOwn)
+    {
+        sections.Add(BuildMissionsSection(councilor));
+        sections.Add(BuildActionsSection(councilor));
+    }
+
+    return sections;
+}
+```
+
+#### Current Reader Audit Status
+
+**Safe for "Browse All":**
+- `RecruitCandidateReader` - Public recruitment pool, no intel needed
+- `TechBrowserReader` - Read-only tech database
+
+**Needs Intel Checks Added:**
+- `CouncilorReader` - **CRITICAL** - Currently has NO ownership/intel checks on actions
+- `NationReader` - Mostly safe, but should verify military data visibility
+- `OrgReader` - Only checks affordability, needs ownership check for enemy orgs
+- `ResearchSlotReader` - Reveals other factions' research rates
+
+**Key Rule:** Actions (missions, automation, XP spending, etc.) must ONLY appear for objects the player owns. Information can be shown based on intel level, but actions require ownership.
+
+### Review Mode Expansion Plans
+
+#### Phase 1: Browse All Mode
+
+Expand existing screens to show all objects, not just player-owned:
+
+- Add toggle key (e.g., `Tab`) to switch between "Mine" / "All"
+- Nations: All 195+ nations, grouped alphabetically
+- Councilors: Your council / Known enemy councilors / All factions
+- Add letter filtering: Press `A` to jump to first "A" item, etc.
+
+**Implementation:** Modify `GetItems()` in each screen to optionally return all objects:
+```csharp
+public override IReadOnlyList<object> GetItems()
+{
+    if (showAllMode)
+        return GameStateManager.AllNations().ToList();
+    else
+        return NationReader.GetPlayerNations(faction);
+}
+```
+
+#### Phase 2: Context Links
+
+When viewing an object that references another object, allow navigation to it:
+- "Controlled by: Exodus" → Press Enter → Go to Exodus faction view
+- "Mission target: China" → Press Enter → Go to China nation detail
+
+#### Phase 3: Search
+
+Free-text search across all objects:
+- Dedicated hotkey enters search mode
+- Regular keyboard for typing (not numpad)
+- Results filter as you type
+- Enter on result jumps to detail view
 
 ## Common Pitfalls
 

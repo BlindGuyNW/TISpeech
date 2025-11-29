@@ -82,6 +82,27 @@ namespace TISpeech.ReviewMode
         public int CurrentItemIndex => currentItemIndex;
 
         /// <summary>
+        /// Reset the item index to 0 (used when the item list changes).
+        /// </summary>
+        public void ResetItemIndex()
+        {
+            currentItemIndex = 0;
+            currentSections = null;
+        }
+
+        /// <summary>
+        /// Set the item index to a specific value (used for letter navigation).
+        /// </summary>
+        public void SetItemIndex(int index)
+        {
+            if (CurrentScreen != null && index >= 0 && index < CurrentScreen.ItemCount)
+            {
+                currentItemIndex = index;
+                currentSections = null;
+            }
+        }
+
+        /// <summary>
         /// Index of the current section item.
         /// </summary>
         public int CurrentSectionItemIndex => currentSectionItemIndex;
