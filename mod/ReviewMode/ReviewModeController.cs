@@ -6,6 +6,7 @@ using MelonLoader;
 using UnityEngine;
 using PavonisInteractive.TerraInvicta;
 using PavonisInteractive.TerraInvicta.Actions;
+using PavonisInteractive.TerraInvicta.Systems.GameTime;
 using TISpeech.ReviewMode.Screens;
 using TISpeech.ReviewMode.Sections;
 
@@ -37,6 +38,10 @@ namespace TISpeech.ReviewMode
 
         // Grid sub-mode (for 2D priority grid navigation)
         private GridSubMode gridMode = null;
+
+        // Notification sub-mode (for navigating notification popups)
+        private NotificationSubMode notificationMode = null;
+        public bool IsInNotificationMode => notificationMode != null;
 
         // Debouncing
         private float lastInputTime = 0f;
@@ -138,8 +143,14 @@ namespace TISpeech.ReviewMode
 
                 bool inputHandled = false;
 
-                // If in selection sub-mode, handle input there first
-                if (selectionMode != null)
+                // Priority order: Notification > Selection > Grid > Navigation
+                // If in notification sub-mode, handle notification input first
+                if (notificationMode != null)
+                {
+                    inputHandled = HandleNotificationModeInput();
+                }
+                // If in selection sub-mode, handle input there
+                else if (selectionMode != null)
                 {
                     inputHandled = HandleSelectionModeInput();
                 }
@@ -377,6 +388,10 @@ namespace TISpeech.ReviewMode
                     return true;
                 }
             }
+
+            // Time controls (Space, 1-6) - work in all Review Mode states
+            if (HandleTimeControls())
+                return true;
 
             return false;
         }
@@ -619,6 +634,344 @@ namespace TISpeech.ReviewMode
             // Back out one level in navigation and announce
             navigation.BackOut();
             TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+        }
+
+        #endregion
+
+        #region Notification Sub-Mode
+
+        /// <summary>
+        /// Enter notification mode. Called by patch when a notification appears while Review Mode is active.
+        /// </summary>
+        public void EnterNotificationMode(PavonisInteractive.TerraInvicta.NotificationScreenController controller)
+        {
+            try
+            {
+                if (controller == null)
+                {
+                    MelonLogger.Error("EnterNotificationMode: controller is null");
+                    return;
+                }
+
+                notificationMode = new NotificationSubMode(controller);
+
+                if (notificationMode.Count == 0)
+                {
+                    MelonLogger.Msg("Notification has no navigable options, staying in standard Review Mode");
+                    notificationMode = null;
+                    return;
+                }
+
+                TISpeechMod.Speak(notificationMode.GetEntryAnnouncement(), interrupt: true);
+                MelonLogger.Msg($"Entered notification mode with {notificationMode.Count} options");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error entering notification mode: {ex.Message}");
+                notificationMode = null;
+            }
+        }
+
+        /// <summary>
+        /// Exit notification mode. Called by patch when notification is dismissed.
+        /// </summary>
+        public void ExitNotificationMode()
+        {
+            if (notificationMode == null)
+                return;
+
+            notificationMode = null;
+            MelonLogger.Msg("Exited notification mode");
+
+            // Don't announce anything - if another notification is coming, it will announce itself
+            // If we're returning to Review Mode navigation, the user can use navigation keys to hear position
+        }
+
+        private bool HandleNotificationModeInput()
+        {
+            if (notificationMode == null) return false;
+
+            // Navigate options (Numpad 8/2 or 4/6)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4))
+            {
+                notificationMode.Previous();
+                TISpeechMod.Speak(notificationMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6))
+            {
+                notificationMode.Next();
+                TISpeechMod.Speak(notificationMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Activate selected option (Enter or Numpad 5)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
+            {
+                var option = notificationMode.CurrentOption;
+                if (option != null)
+                {
+                    TISpeechMod.Speak($"Activating {option.Label}", interrupt: true);
+                    notificationMode.Activate();
+                    // Note: Notification cleanup is handled by the game's CleanUp method,
+                    // which triggers our ExitNotificationMode via patch
+                }
+                return true;
+            }
+
+            // Read current option detail (Numpad *)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply))
+            {
+                TISpeechMod.Speak(notificationMode.GetCurrentDetail(), interrupt: true);
+                return true;
+            }
+
+            // List all options (Numpad /)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide))
+            {
+                TISpeechMod.Speak(notificationMode.ListAllOptions(), interrupt: true);
+                return true;
+            }
+
+            // Escape - select and activate close option
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                if (notificationMode.SelectCloseOption())
+                {
+                    var option = notificationMode.CurrentOption;
+                    TISpeechMod.Speak($"Closing notification", interrupt: true);
+                    notificationMode.Activate();
+                }
+                return true;
+            }
+
+            // Block Numpad 0 (don't allow exiting Review Mode while notification is open)
+            if (Input.GetKeyDown(KeyCode.Keypad0))
+            {
+                TISpeechMod.Speak("Cannot exit Review Mode while notification is open. Use Enter to select an option, or Escape to close.", interrupt: true);
+                return true;
+            }
+
+            // Allow time controls even in notification mode
+            if (HandleTimeControls())
+                return true;
+
+            return false;
+        }
+
+        #endregion
+
+        #region Time Controls
+
+        /// <summary>
+        /// Handle time control keys (Space for pause, 1-6 for speed, 7 for status).
+        /// These work in any Review Mode state since we block normal keybindings.
+        /// </summary>
+        private bool HandleTimeControls()
+        {
+            var gameTime = GameTimeManager.Singleton;
+            if (gameTime == null)
+                return false;
+
+            // Numpad 7 - Read full time status (date, time, speed)
+            if (Input.GetKeyDown(KeyCode.Keypad7))
+            {
+                AnnounceFullTimeStatus();
+                return true;
+            }
+
+            // Space - Toggle pause
+            if (Input.GetKeyDown(KeyCode.Space))
+            {
+                if (gameTime.Paused)
+                {
+                    // Check if time is blocked (e.g., mission assignments not confirmed)
+                    if (gameTime.IsBlocked)
+                    {
+                        string blockReason = TIPromptQueueState.GetBlockingDetailStr();
+                        if (!string.IsNullOrEmpty(blockReason))
+                        {
+                            TISpeechMod.Speak($"Cannot unpause: {TISpeechMod.CleanText(blockReason)}", interrupt: true);
+                        }
+                        else
+                        {
+                            TISpeechMod.Speak("Cannot unpause: time is blocked", interrupt: true);
+                        }
+                    }
+                    else
+                    {
+                        gameTime.Play();
+                        AnnounceTimeState();
+                    }
+                }
+                else
+                {
+                    gameTime.Pause();
+                    TISpeechMod.Speak("Paused", interrupt: true);
+                }
+                return true;
+            }
+
+            // Number keys 1-6 - Set speed directly
+            if (Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Keypad1))
+            {
+                SetSpeedAndAnnounce(1);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.Keypad2))
+            {
+                // Only handle if not in navigation mode (Numpad 2 is used for navigation)
+                if (Input.GetKeyDown(KeyCode.Alpha2))
+                {
+                    SetSpeedAndAnnounce(2);
+                    return true;
+                }
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha3))
+            {
+                SetSpeedAndAnnounce(3);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha4) || Input.GetKeyDown(KeyCode.Keypad4))
+            {
+                // Only handle Alpha4 (Numpad 4 is used for navigation)
+                if (Input.GetKeyDown(KeyCode.Alpha4))
+                {
+                    SetSpeedAndAnnounce(4);
+                    return true;
+                }
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha5) || Input.GetKeyDown(KeyCode.Keypad5))
+            {
+                // Only handle Alpha5 (Numpad 5 is used for activation)
+                if (Input.GetKeyDown(KeyCode.Alpha5))
+                {
+                    SetSpeedAndAnnounce(5);
+                    return true;
+                }
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha6) || Input.GetKeyDown(KeyCode.Keypad6))
+            {
+                // Only handle Alpha6 (Numpad 6 is used for navigation)
+                if (Input.GetKeyDown(KeyCode.Alpha6))
+                {
+                    SetSpeedAndAnnounce(6);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void SetSpeedAndAnnounce(int speedIndex)
+        {
+            var gameTime = GameTimeManager.Singleton;
+            if (gameTime == null)
+                return;
+
+            // Check if time is blocked before trying to set speed
+            if (gameTime.IsBlocked && speedIndex > 0)
+            {
+                string blockReason = TIPromptQueueState.GetBlockingDetailStr();
+                if (!string.IsNullOrEmpty(blockReason))
+                {
+                    TISpeechMod.Speak($"Cannot set speed: {TISpeechMod.CleanText(blockReason)}", interrupt: true);
+                }
+                else
+                {
+                    TISpeechMod.Speak("Cannot set speed: time is blocked", interrupt: true);
+                }
+                return;
+            }
+
+            gameTime.SetSpeed(speedIndex, pushBeyondCap: false);
+            AnnounceTimeState();
+        }
+
+        private void AnnounceTimeState()
+        {
+            var gameTime = GameTimeManager.Singleton;
+            if (gameTime == null)
+                return;
+
+            if (gameTime.Paused)
+            {
+                TISpeechMod.Speak("Paused", interrupt: true);
+            }
+            else
+            {
+                var setting = gameTime.CurrentSpeedSetting;
+                string speedText = !string.IsNullOrEmpty(setting.description)
+                    ? setting.description
+                    : $"Speed {gameTime.currentSpeedIndex}";
+                TISpeechMod.Speak(speedText, interrupt: true);
+            }
+        }
+
+        private void AnnounceFullTimeStatus()
+        {
+            var sb = new StringBuilder();
+
+            // Get current game date
+            try
+            {
+                var now = TITimeState.Now();
+                if (now != null)
+                {
+                    sb.Append(now.ToCustomDateString());
+                }
+            }
+            catch
+            {
+                sb.Append("Date unknown");
+            }
+
+            // Get speed status
+            var gameTime = GameTimeManager.Singleton;
+            if (gameTime != null)
+            {
+                sb.Append(". ");
+                if (gameTime.Paused)
+                {
+                    sb.Append("Paused");
+                }
+                else
+                {
+                    var setting = gameTime.CurrentSpeedSetting;
+                    string speedText = !string.IsNullOrEmpty(setting.description)
+                        ? setting.description
+                        : $"Speed {gameTime.currentSpeedIndex}";
+                    sb.Append(speedText);
+                }
+            }
+
+            // Check if in mission phase
+            try
+            {
+                var missionPhase = GameStateManager.MissionPhase();
+                if (missionPhase != null && missionPhase.phaseActive)
+                {
+                    sb.Append(". Mission phase active");
+                }
+            }
+            catch { }
+
+            // Check if time is blocked and why
+            if (gameTime != null && gameTime.IsBlocked)
+            {
+                string blockReason = TIPromptQueueState.GetBlockingDetailStr();
+                if (!string.IsNullOrEmpty(blockReason))
+                {
+                    sb.Append(". Blocked: ");
+                    sb.Append(TISpeechMod.CleanText(blockReason));
+                }
+                else
+                {
+                    sb.Append(". Time blocked");
+                }
+            }
+
+            TISpeechMod.Speak(sb.ToString(), interrupt: true);
         }
 
         #endregion

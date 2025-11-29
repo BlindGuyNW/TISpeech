@@ -45,7 +45,12 @@ namespace TISpeech.ReviewMode.Readers
 
                 if (slot < 3)
                 {
-                    // Global tech slot
+                    // Global tech slot - check if selection is pending (research completed)
+                    if (NeedsSelection(slot, faction, globalResearch))
+                    {
+                        return $"Slot {slot + 1}: Select new technology, {priorityStr}";
+                    }
+
                     var progress = globalResearch.GetTechProgress(slot);
                     if (progress?.techTemplate != null)
                     {
@@ -57,8 +62,13 @@ namespace TISpeech.ReviewMode.Readers
                 }
                 else
                 {
-                    // Faction project slot
+                    // Faction project slot - check if selection is pending
                     string slotName = GetProjectSlotName(slot);
+                    if (NeedsSelection(slot, faction, globalResearch))
+                    {
+                        return $"{slotName}: Select new project, {priorityStr}";
+                    }
+
                     var projectProgress = faction.GetProjectProgressInSlot(slot);
                     if (projectProgress?.projectTemplate != null)
                     {
@@ -76,6 +86,32 @@ namespace TISpeech.ReviewMode.Readers
             }
         }
 
+        /// <summary>
+        /// Check if a slot needs the player to select a new tech/project.
+        /// This happens when research completes and the player won or needs to choose the next one.
+        /// </summary>
+        private bool NeedsSelection(int slot, TIFactionState faction, TIGlobalResearchState globalResearch)
+        {
+            try
+            {
+                if (slot < 3)
+                {
+                    // Global tech slot - check for pending PromptSelectTech
+                    return TIPromptQueueState.HasPromptStatic(faction, globalResearch, null, "PromptSelectTech", slot);
+                }
+                else
+                {
+                    // Faction project slot - check for pending PromptSelectProject
+                    return TIPromptQueueState.HasPromptStatic(faction, faction, null, "PromptSelectProject", slot);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error checking selection state for slot {slot}: {ex.Message}");
+                return false;
+            }
+        }
+
         public string ReadDetail(int slot)
         {
             try
@@ -87,11 +123,22 @@ namespace TISpeech.ReviewMode.Readers
                     return "Research data unavailable";
 
                 var sb = new StringBuilder();
+                int priority = faction.researchWeights[slot];
 
                 if (slot < 3)
                 {
                     // Global tech slot
                     sb.AppendLine($"Global Research Slot {slot + 1}");
+
+                    // Check if selection is pending (research completed)
+                    if (NeedsSelection(slot, faction, globalResearch))
+                    {
+                        sb.AppendLine("Status: Research completed - select new technology");
+                        sb.AppendLine($"Priority: {priority}");
+                        sb.AppendLine("Use Enter to select a new technology for this slot.");
+                        return sb.ToString();
+                    }
+
                     var progress = globalResearch.GetTechProgress(slot);
 
                     if (progress?.techTemplate != null)
@@ -142,8 +189,6 @@ namespace TISpeech.ReviewMode.Readers
                         sb.AppendLine("No technology selected");
                     }
 
-                    // Priority
-                    int priority = faction.researchWeights[slot];
                     sb.AppendLine($"Priority: {priority}");
                 }
                 else
@@ -151,6 +196,15 @@ namespace TISpeech.ReviewMode.Readers
                     // Faction project slot
                     string slotName = GetProjectSlotName(slot);
                     sb.AppendLine($"{slotName}");
+
+                    // Check if selection is pending (project completed)
+                    if (NeedsSelection(slot, faction, globalResearch))
+                    {
+                        sb.AppendLine("Status: Project completed - select new project");
+                        sb.AppendLine($"Priority: {priority}");
+                        sb.AppendLine("Use Enter to select a new project for this slot.");
+                        return sb.ToString();
+                    }
 
                     var projectProgress = faction.GetProjectProgressInSlot(slot);
                     if (projectProgress?.projectTemplate != null)
@@ -178,7 +232,6 @@ namespace TISpeech.ReviewMode.Readers
                         sb.AppendLine("No project selected");
                     }
 
-                    int priority = faction.researchWeights[slot];
                     sb.AppendLine($"Priority: {priority}");
                 }
 
@@ -249,7 +302,17 @@ namespace TISpeech.ReviewMode.Readers
 
             if (slot < 3)
             {
-                // Global tech
+                // Global tech - check for pending selection first
+                if (NeedsSelection(slot, faction, globalResearch))
+                {
+                    section.AddItem("Status", "Research completed - select new technology");
+                    section.AddItem("Action", "Use Enter to select a technology", onActivate: () =>
+                    {
+                        StartTechSelection(slot, faction);
+                    });
+                    return section;
+                }
+
                 var progress = globalResearch.GetTechProgress(slot);
                 if (progress?.techTemplate != null)
                 {
@@ -272,9 +335,19 @@ namespace TISpeech.ReviewMode.Readers
             }
             else
             {
-                // Faction project
+                // Faction project - check for pending selection first
                 string slotName = GetProjectSlotName(slot);
                 section.AddItem("Slot", slotName);
+
+                if (NeedsSelection(slot, faction, globalResearch))
+                {
+                    section.AddItem("Status", "Project completed - select new project");
+                    section.AddItem("Action", "Use Enter to select a project", onActivate: () =>
+                    {
+                        StartProjectSelection(slot, faction);
+                    });
+                    return section;
+                }
 
                 var projectProgress = faction.GetProjectProgressInSlot(slot);
                 if (projectProgress?.projectTemplate != null)
@@ -566,10 +639,21 @@ namespace TISpeech.ReviewMode.Readers
 
             if (slot < 3)
             {
-                // Global tech slot - can only select if we're the selector
+                // Global tech slot
+                bool needsSelection = NeedsSelection(slot, faction, globalResearch);
                 var progress = globalResearch.GetTechProgress(slot);
-                if (progress != null && progress.selector == faction)
+
+                // If selection is pending, show prominent action
+                if (needsSelection)
                 {
+                    section.AddItem("Select Technology (Required)", "Choose a new technology to research", onActivate: () =>
+                    {
+                        StartTechSelection(slot, faction);
+                    });
+                }
+                else if (progress != null && progress.selector == faction)
+                {
+                    // We're the selector - can change if we want
                     section.AddItem("Select New Technology", onActivate: () =>
                     {
                         StartTechSelection(slot, faction);
@@ -586,11 +670,23 @@ namespace TISpeech.ReviewMode.Readers
             }
             else
             {
-                // Faction project slot - can always change
-                section.AddItem("Change Project", onActivate: () =>
+                // Faction project slot
+                bool needsSelection = NeedsSelection(slot, faction, globalResearch);
+
+                if (needsSelection)
                 {
-                    StartProjectSelection(slot, faction);
-                });
+                    section.AddItem("Select Project (Required)", "Choose a new project to develop", onActivate: () =>
+                    {
+                        StartProjectSelection(slot, faction);
+                    });
+                }
+                else
+                {
+                    section.AddItem("Change Project", onActivate: () =>
+                    {
+                        StartProjectSelection(slot, faction);
+                    });
+                }
             }
 
             return section;

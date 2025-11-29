@@ -1470,5 +1470,70 @@ namespace TISpeech.Patches
         }
 
         #endregion
+
+        #region Notification Review Mode Patches
+
+        /// <summary>
+        /// Patch NotificationScreenController.PushNextAlert to enter notification mode when Review Mode is active.
+        /// This allows keyboard navigation through notification options.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "PushNextAlert")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_PushNextAlert_Postfix(NotificationScreenController __instance)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                // Only enter notification mode if Review Mode is already active
+                var reviewMode = ReviewMode.ReviewModeController.Instance;
+                if (reviewMode == null || !reviewMode.IsActive)
+                {
+                    MelonLogger.Msg("Notification appeared but Review Mode is not active - skipping notification mode");
+                    return;
+                }
+
+                // Don't enter notification mode if we're already in it (shouldn't happen but be safe)
+                if (reviewMode.IsInNotificationMode)
+                {
+                    MelonLogger.Msg("Already in notification mode - refreshing");
+                    reviewMode.ExitNotificationMode();
+                }
+
+                // Enter notification mode
+                reviewMode.EnterNotificationMode(__instance);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in PushNextAlert patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch NotificationScreenController.CleanUp to exit notification mode when notification is dismissed.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "CleanUp", new Type[] { typeof(NotificationQueueItem) })]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_CleanUp_Postfix()
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                var reviewMode = ReviewMode.ReviewModeController.Instance;
+                if (reviewMode?.IsInNotificationMode == true)
+                {
+                    reviewMode.ExitNotificationMode();
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in CleanUp patch: {ex.Message}");
+            }
+        }
+
+        #endregion
     }
 }
