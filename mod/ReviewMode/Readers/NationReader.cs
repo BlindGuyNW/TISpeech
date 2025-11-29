@@ -60,18 +60,35 @@ namespace TISpeech.ReviewMode.Readers
             sb.AppendLine($"GDP per Capita: ${nation.perCapitaGDP:N0}");
 
             sb.AppendLine();
+            sb.AppendLine("Space:");
+            sb.AppendLine($"  Investment Points: {nation.BaseInvestmentPoints_month():F1} IP/month");
+            sb.AppendLine($"  Boost: {nation.boostIncome_month_dekatons:F1} dt/month");
+            sb.AppendLine($"  Space Funding: ${FormatLargeNumber(nation.spaceFunding_month)}/month");
+            sb.AppendLine($"  Research: {nation.research_month:F1}/month");
+            sb.AppendLine($"  Mission Control: {nation.missionControl:F1}");
+            if (nation.spaceFlightProgram)
+                sb.AppendLine("  Space Program: Active");
+            if (nation.canBuildSpaceDefenses)
+                sb.AppendLine("  Space Defenses: Available");
+
+            sb.AppendLine();
             sb.AppendLine("Statistics:");
             sb.AppendLine($"  Democracy: {nation.democracy:F1}");
             sb.AppendLine($"  Cohesion: {nation.cohesion:F1}");
             sb.AppendLine($"  Education: {nation.education:F1}");
             sb.AppendLine($"  Inequality: {nation.inequality:F1}");
             sb.AppendLine($"  Unrest: {nation.unrest:F1}");
+            sb.AppendLine($"  Sustainability: {TINationState.SustainabilityValueForDisplay(nation.sustainability)}");
 
             sb.AppendLine();
             sb.AppendLine("Military:");
             sb.AppendLine($"  Miltech: {nation.militaryTechLevel:F1}");
             sb.AppendLine($"  Armies: {nation.armies?.Count ?? 0}");
+            sb.AppendLine($"  Navies: {nation.numNavies}");
+            sb.AppendLine($"  STO Fighters: {nation.numSTOFighters}");
             sb.AppendLine($"  Nuclear Weapons: {nation.numNuclearWeapons}");
+            if (nation.nuclearProgram)
+                sb.AppendLine("  Nuclear Program: Active");
 
             return sb.ToString();
         }
@@ -147,6 +164,34 @@ namespace TISpeech.ReviewMode.Readers
 
             section.AddItem("Capital", nation.capital?.displayName ?? "None");
             section.AddItem("Regions", nation.regions?.Count.ToString() ?? "0");
+
+            // Investment Points with tooltip
+            string ipTooltip = GetCleanTooltip(() => NationInfoController.BuildInvestmentTooltip(nation));
+            float ipPerMonth = nation.BaseInvestmentPoints_month();
+            section.AddItem("Investment Points", $"{ipPerMonth:F1} IP/month", ipTooltip);
+
+            // Boost income
+            float boostPerMonth = nation.boostIncome_month_dekatons;
+            if (boostPerMonth > 0)
+            {
+                string boostTooltip = GetCleanTooltip(() => NationInfoController.BuildBoostTooltip(nation));
+                section.AddItem("Boost", $"{boostPerMonth:F1} dt/month", boostTooltip);
+            }
+
+            // Space funding
+            float fundingPerMonth = nation.spaceFunding_month;
+            string fundingTooltip = GetCleanTooltip(() => NationInfoController.BuildSpaceFundingTooltip(nation));
+            section.AddItem("Space Funding", $"${FormatLargeNumber(fundingPerMonth)}/month", fundingTooltip);
+
+            // Research
+            float researchPerMonth = nation.research_month;
+            string researchTooltip = GetCleanTooltip(() => NationInfoController.BuildResearchTooltip(nation));
+            section.AddItem("Research", $"{researchPerMonth:F1}/month", researchTooltip);
+
+            // Mission Control
+            float missionControl = nation.missionControl;
+            string mcTooltip = GetCleanTooltip(() => NationInfoController.BuildMissionControlTooltip(nation));
+            section.AddItem("Mission Control", $"{missionControl:F1}", mcTooltip);
 
             // Key stats with tooltips
             string democracyTooltip = GetCleanTooltip(() => NationInfoController.BuildDemocracyTooltip(nation));
@@ -329,7 +374,16 @@ namespace TISpeech.ReviewMode.Readers
             {
                 string factionName = group.Key;
                 int count = group.Count();
-                section.AddItem(factionName, $"{count} CP{(count > 1 ? "s" : "")}");
+                int defendedCount = group.Count(cp => cp.defended);
+                int crackdownCount = group.Count(cp => cp.benefitsDisabled);
+
+                string details = $"{count} CP{(count > 1 ? "s" : "")}";
+                if (defendedCount > 0)
+                    details += $", {defendedCount} defended";
+                if (crackdownCount > 0)
+                    details += $", {crackdownCount} under crackdown";
+
+                section.AddItem(factionName, details);
             }
 
             return section;
@@ -341,11 +395,17 @@ namespace TISpeech.ReviewMode.Readers
 
             section.AddItem("Military Tech", $"{nation.militaryTechLevel:F1}");
             section.AddItem("Armies", (nation.armies?.Count ?? 0).ToString());
+            section.AddItem("Navies", nation.numNavies.ToString());
+            section.AddItem("STO Fighters", nation.numSTOFighters.ToString());
             section.AddItem("Nuclear Weapons", nation.numNuclearWeapons.ToString());
 
             if (nation.nuclearProgram)
             {
                 section.AddItem("Nuclear Program", "Active");
+            }
+            else if (nation.numNuclearWeapons == 0)
+            {
+                section.AddItem("Nuclear Program", "None");
             }
 
             if (nation.spaceFlightProgram)
@@ -653,7 +713,9 @@ namespace TISpeech.ReviewMode.Readers
             // Control points are identified by type and index
             int index = nation.controlPoints?.IndexOf(cp) ?? 0;
             string typeName = cp.controlPointType.ToString();
-            return $"CP {index + 1} ({typeName})";
+            string defended = cp.defended ? ", defended" : "";
+            string crackdown = cp.benefitsDisabled ? ", crackdown" : "";
+            return $"CP {index + 1} ({typeName}{defended}{crackdown})";
         }
 
         private string GetPrioritySummary(TIControlPoint cp)

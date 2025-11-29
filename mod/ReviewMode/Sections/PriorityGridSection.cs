@@ -20,6 +20,7 @@ namespace TISpeech.ReviewMode.Sections
         private TIFactionState playerFaction;
         private List<PriorityType> priorities;  // rows
         private List<TIControlPoint> controlPoints;  // columns
+        private bool readOnly;  // True when viewing a nation you don't control
 
         private DisplayMode displayMode = DisplayMode.Percentage;
 
@@ -27,7 +28,8 @@ namespace TISpeech.ReviewMode.Sections
         private Action<string> onSpeak;
         private Action<string, List<SelectionOption>, Action<int>> onEnterSelectionMode;
 
-        public string Name => "Priority Grid";
+        public string Name => readOnly ? "Priority Grid (Read-Only)" : "Priority Grid";
+        public bool IsReadOnly => readOnly;
         public int RowCount => priorities.Count;
         // +1 for the Allocation column on the right
         public int ColumnCount => controlPoints.Count + 1;
@@ -42,12 +44,14 @@ namespace TISpeech.ReviewMode.Sections
             TINationState nation,
             TIFactionState playerFaction,
             Action<string> onSpeak,
-            Action<string, List<SelectionOption>, Action<int>> onEnterSelectionMode)
+            Action<string, List<SelectionOption>, Action<int>> onEnterSelectionMode,
+            bool readOnly = false)
         {
             this.nation = nation;
             this.playerFaction = playerFaction;
             this.onSpeak = onSpeak;
             this.onEnterSelectionMode = onEnterSelectionMode;
+            this.readOnly = readOnly;
 
             // Initialize rows (valid priorities for this nation)
             priorities = nation.ValidPriorities.ToList();
@@ -61,7 +65,15 @@ namespace TISpeech.ReviewMode.Sections
         public string GetEntryAnnouncement()
         {
             var sb = new StringBuilder();
-            sb.Append($"Priority Grid. {RowCount} priorities, {controlPoints.Count} control points plus allocation column. ");
+
+            if (readOnly)
+            {
+                sb.Append($"Priority Grid (read-only). {RowCount} priorities, {controlPoints.Count} control points plus allocation column. ");
+            }
+            else
+            {
+                sb.Append($"Priority Grid. {RowCount} priorities, {controlPoints.Count} control points plus allocation column. ");
+            }
 
             // Describe CP ownership
             var yourCPs = controlPoints.Where(cp => cp.faction == playerFaction).ToList();
@@ -72,14 +84,22 @@ namespace TISpeech.ReviewMode.Sections
             {
                 if (yourCPs.Count == 1)
                 {
-                    var preset = GetCPPresetMatch(controlPoints.IndexOf(yourCPs[0]));
+                    var cp = yourCPs[0];
+                    var preset = GetCPPresetMatch(controlPoints.IndexOf(cp));
                     string presetInfo = !string.IsNullOrEmpty(preset) ? $" ({preset})" : "";
-                    sb.Append($"CP {yourCPs[0].positionInNation + 1} is yours{presetInfo}. ");
+                    string defendedInfo = cp.defended ? ", defended" : "";
+                    sb.Append($"CP {cp.positionInNation + 1} is yours{presetInfo}{defendedInfo}. ");
                 }
                 else
                 {
-                    var cpNums = string.Join(", ", yourCPs.Select(cp => (cp.positionInNation + 1).ToString()));
-                    sb.Append($"CPs {cpNums} are yours. ");
+                    // List each CP with defended status
+                    foreach (var cp in yourCPs)
+                    {
+                        string defendedInfo = cp.defended ? " (defended)" : "";
+                        sb.Append($"CP {cp.positionInNation + 1}{defendedInfo}, ");
+                    }
+                    sb.Length -= 2; // Remove trailing ", "
+                    sb.Append(" are yours. ");
                 }
             }
 
@@ -87,7 +107,8 @@ namespace TISpeech.ReviewMode.Sections
             {
                 foreach (var cp in enemyCPs)
                 {
-                    sb.Append($"CP {cp.positionInNation + 1} is {cp.faction.displayName}. ");
+                    string defendedInfo = cp.defended ? ", defended" : "";
+                    sb.Append($"CP {cp.positionInNation + 1} is {cp.faction.displayName}{defendedInfo}. ");
                 }
             }
 
@@ -327,10 +348,12 @@ namespace TISpeech.ReviewMode.Sections
                 return GetDisplayModeName();
 
             var cp = controlPoints[col];
+            string defended = cp.defended ? ", defended" : "";
+
             if (cp.faction == playerFaction)
-                return "yours";
+                return $"yours{defended}";
             if (cp.faction != null && cp.owned)
-                return cp.faction.displayName;
+                return $"{cp.faction.displayName}{defended}";
             return "uncontrolled";
         }
 
@@ -370,9 +393,12 @@ namespace TISpeech.ReviewMode.Sections
         {
             if (row < 0 || row >= RowCount || col < 0 || col >= ColumnCount)
                 return false;
-            // Allocation column is always "editable" (toggles display mode)
+            // Allocation column is always "editable" (toggles display mode) even in read-only
             if (col == AllocationColumnIndex)
                 return true;
+            // In read-only mode, no CP editing is allowed
+            if (readOnly)
+                return false;
             return IsCPOurs(col);
         }
 
@@ -419,6 +445,12 @@ namespace TISpeech.ReviewMode.Sections
             if (row < 0 || row >= RowCount)
                 return;
 
+            if (readOnly)
+            {
+                onSpeak?.Invoke("Cannot edit. This is a read-only view.");
+                return;
+            }
+
             var priority = priorities[row];
             int changeCount = 0;
 
@@ -456,6 +488,12 @@ namespace TISpeech.ReviewMode.Sections
 
         public void SyncFromCP(int col)
         {
+            if (readOnly)
+            {
+                onSpeak?.Invoke("Cannot sync. This is a read-only view.");
+                return;
+            }
+
             // Can't sync from allocation column
             if (col == AllocationColumnIndex)
             {
@@ -503,6 +541,12 @@ namespace TISpeech.ReviewMode.Sections
 
         public void StartPresetSelection()
         {
+            if (readOnly)
+            {
+                onSpeak?.Invoke("Cannot apply presets. This is a read-only view.");
+                return;
+            }
+
             try
             {
                 var presets = GetAvailablePresets();

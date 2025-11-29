@@ -12,13 +12,24 @@ namespace TISpeech.ReviewMode.Screens
     /// <summary>
     /// Nations screen - browse nations where you have control points or all nations.
     /// Each nation can be drilled into for detailed info and priority management.
-    /// Supports view mode toggle (Tab) and letter navigation (A-Z keys).
+    /// Supports view mode toggle (Tab), letter navigation (A-Z keys), sorting (S key), and faction filtering (F key).
     /// </summary>
     public class NationScreen : ScreenBase
     {
         private List<TINationState> nations = new List<TINationState>();
         private readonly NationReader nationReader = new NationReader();
         private ViewMode viewMode = ViewMode.Mine;
+
+        // Sorting
+        private SortNationDataBy currentSort = SortNationDataBy.Alfa;
+        private bool sortDescending = false;
+
+        // Faction filtering
+        private TIFactionState filterFaction = null; // null = no filter (show all)
+        private int filterIndex = 0; // 0=All, 1=Mine, 2=Uncontrolled, 3+=specific factions
+
+        // Pending sort options for callback
+        private List<SelectionOption> pendingSortOptions = null;
 
         // Cached sections
         private int cachedItemIndex = -1;
@@ -70,16 +81,32 @@ namespace TISpeech.ReviewMode.Screens
             get
             {
                 var faction = GameControl.control?.activePlayer;
+                string baseDesc;
+
                 if (viewMode == ViewMode.Mine && faction != null)
                 {
                     int yourNations = nations.Count;
                     int totalCPs = faction.controlPoints?.Count ?? 0;
-                    return $"{yourNations} nations with {totalCPs} control points";
+                    baseDesc = $"{yourNations} nations with {totalCPs} control points";
                 }
                 else
                 {
-                    return $"All {nations.Count} nations in the world";
+                    baseDesc = $"All {nations.Count} nations";
                 }
+
+                // Add sort info
+                string sortInfo = GetCurrentSortDescription();
+
+                // Add filter info
+                string filterInfo = "";
+                if (filterIndex == 1)
+                    filterInfo = ", filtered to mine";
+                else if (filterIndex == 2)
+                    filterInfo = ", filtered to uncontrolled";
+                else if (filterFaction != null)
+                    filterInfo = $", filtered to {filterFaction.displayName}";
+
+                return $"{baseDesc}, sorted by {sortInfo}{filterInfo}. Ctrl+S to sort, Ctrl+F to filter.";
             }
         }
 
@@ -95,20 +122,25 @@ namespace TISpeech.ReviewMode.Screens
                 if (faction == null)
                     return;
 
+                List<TINationState> allNations;
                 if (viewMode == ViewMode.Mine)
                 {
                     // Get nations where player has control points
-                    nations = NationReader.GetPlayerNations(faction);
+                    allNations = NationReader.GetPlayerNations(faction);
                 }
                 else
                 {
-                    // Get all nations, sorted alphabetically
-                    nations = NationReader.GetAllNations()
-                        .OrderBy(n => n.displayName)
-                        .ToList();
+                    // Get all nations
+                    allNations = NationReader.GetAllNations();
                 }
 
-                MelonLogger.Msg($"NationScreen refreshed: {nations.Count} nations in {viewMode} mode");
+                // Apply faction filter
+                allNations = ApplyFactionFilter(allNations, faction);
+
+                // Apply sorting
+                nations = ApplySorting(allNations, faction);
+
+                MelonLogger.Msg($"NationScreen refreshed: {nations.Count} nations in {viewMode} mode, sorted by {currentSort}");
             }
             catch (Exception ex)
             {
@@ -148,7 +180,114 @@ namespace TISpeech.ReviewMode.Screens
                 }
             }
 
+            // Add sort-relevant data when not sorting alphabetically
+            summary += GetSortRelevantInfo(nation);
+
             return summary;
+        }
+
+        /// <summary>
+        /// Get additional info relevant to the current sort field.
+        /// </summary>
+        private string GetSortRelevantInfo(TINationState nation)
+        {
+            var faction = GameControl.control?.activePlayer;
+
+            switch (currentSort)
+            {
+                case SortNationDataBy.Alfa:
+                    // No additional info needed for alphabetical
+                    return "";
+
+                case SortNationDataBy.MyControlPoints:
+                    // Already in base summary
+                    return "";
+
+                case SortNationDataBy.HighestPopularity:
+                    float highPop = GetHighestPopularity(nation) * 100f;
+                    return $", highest {highPop:F0}%";
+
+                case SortNationDataBy.MyPopularity:
+                    float myPop = GetMyPopularity(nation, faction) * 100f;
+                    return $", my pop {myPop:F0}%";
+
+                case SortNationDataBy.Population:
+                    // Already in base summary
+                    return "";
+
+                case SortNationDataBy.GDP:
+                case SortNationDataBy.Difficulty:
+                    return $", ${FormatLargeNumber(nation.GDP)} GDP";
+
+                case SortNationDataBy.PerCapitaGDP:
+                    return $", ${nation.perCapitaGDP:N0} per capita";
+
+                case SortNationDataBy.Government:
+                    return $", democracy {nation.democracy:F1}";
+
+                case SortNationDataBy.Education:
+                    return $", education {nation.education:F1}";
+
+                case SortNationDataBy.Inequality:
+                    return $", inequality {nation.inequality:F1}";
+
+                case SortNationDataBy.Cohesion:
+                    return $", cohesion {nation.cohesion:F1}";
+
+                case SortNationDataBy.Unrest:
+                    return $", unrest {nation.unrest:F1}";
+
+                case SortNationDataBy.Funding:
+                    return $", ${FormatLargeNumber(nation.spaceFunding_month)}/mo funding";
+
+                case SortNationDataBy.Research:
+                    return $", {nation.research_month:F1}/mo research";
+
+                case SortNationDataBy.Boost:
+                    return $", {nation.boostIncome_month_dekatons:F1} dt/mo boost";
+
+                case SortNationDataBy.MissionControl:
+                    return $", MC {nation.missionControl:F1}";
+
+                case SortNationDataBy.Miltech:
+                    return $", miltech {nation.militaryTechLevel:F1}";
+
+                case SortNationDataBy.Armies:
+                    return $", {nation.armies?.Count ?? 0} armies";
+
+                case SortNationDataBy.Navies:
+                    return $", {nation.numNavies} navies";
+
+                case SortNationDataBy.STOFighters:
+                    return $", {nation.numSTOFighters} STO";
+
+                case SortNationDataBy.NuclearWeapons:
+                    return $", {nation.numNuclearWeapons} nukes";
+
+                case SortNationDataBy.InvestmentPoints:
+                    return $", {nation.BaseInvestmentPoints_month():F1} IP/mo";
+
+                case SortNationDataBy.Sustainability:
+                    return $", sust {TINationState.SustainabilityValueForDisplay(nation.sustainability)}";
+
+                case SortNationDataBy.Wars:
+                    int warCount = nation.wars?.Count ?? 0;
+                    return warCount > 0 ? $", {warCount} wars" : "";
+
+                default:
+                    return "";
+            }
+        }
+
+        private string FormatLargeNumber(double value)
+        {
+            if (value >= 1_000_000_000_000)
+                return $"{value / 1_000_000_000_000:F1}T";
+            if (value >= 1_000_000_000)
+                return $"{value / 1_000_000_000:F1}B";
+            if (value >= 1_000_000)
+                return $"{value / 1_000_000:F1}M";
+            return $"{value:N0}";
         }
 
         /// <summary>
@@ -201,30 +340,428 @@ namespace TISpeech.ReviewMode.Screens
             // Get base sections from reader
             cachedSections = nationReader.GetSections(nation);
 
-            // Add priority actions section for nations where you have control
+            // Always add priority grid section - read-only if player has no CPs
             var faction = GameControl.control?.activePlayer;
-            if (faction != null)
+            if (faction != null && nation.controlPoints != null && nation.controlPoints.Count > 0)
             {
-                var yourCPs = nation.controlPoints?.Where(cp => cp.faction == faction).ToList();
-                if (yourCPs != null && yourCPs.Count > 0)
-                {
-                    // Use grid section for priority management
-                    cachedSections.Add(CreatePriorityGridSection(nation, faction));
-                }
+                var yourCPs = nation.controlPoints.Where(cp => cp.faction == faction).ToList();
+                bool hasControl = yourCPs.Count > 0;
+                cachedSections.Add(CreatePriorityGridSection(nation, faction, readOnly: !hasControl));
             }
 
             return cachedSections;
         }
 
-        private ISection CreatePriorityGridSection(TINationState nation, TIFactionState faction)
+        private ISection CreatePriorityGridSection(TINationState nation, TIFactionState faction, bool readOnly = false)
         {
             return new PriorityGridSection(
                 nation,
                 faction,
                 (text) => OnSpeak?.Invoke(text, true),
-                OnEnterSelectionMode
+                OnEnterSelectionMode,
+                readOnly
             );
         }
+
+        #region Sorting and Filtering
+
+        /// <summary>
+        /// Apply faction filter to nation list.
+        /// </summary>
+        private List<TINationState> ApplyFactionFilter(List<TINationState> allNations, TIFactionState playerFaction)
+        {
+            // filterIndex: 0=All, 1=Mine, 2=Uncontrolled, 3+=specific factions
+            if (filterIndex == 0)
+            {
+                // No filter - show all
+                return allNations;
+            }
+            else if (filterIndex == 1)
+            {
+                // Mine - nations where player has any CP
+                return allNations.Where(n =>
+                    n.controlPoints?.Any(cp => cp.faction == playerFaction) ?? false
+                ).ToList();
+            }
+            else if (filterIndex == 2)
+            {
+                // Uncontrolled - nations with no faction controlling executive
+                return allNations.Where(n =>
+                    n.executiveFaction == null
+                ).ToList();
+            }
+            else if (filterFaction != null)
+            {
+                // Specific faction - nations where that faction has any CP
+                return allNations.Where(n =>
+                    n.controlPoints?.Any(cp => cp.faction == filterFaction) ?? false
+                ).ToList();
+            }
+
+            return allNations;
+        }
+
+        /// <summary>
+        /// Apply current sort to nation list.
+        /// </summary>
+        private List<TINationState> ApplySorting(List<TINationState> nations, TIFactionState playerFaction)
+        {
+            IOrderedEnumerable<TINationState> sorted;
+
+            Func<TINationState, object> keySelector = GetSortKeySelector(playerFaction);
+
+            if (sortDescending)
+            {
+                sorted = nations.OrderByDescending(keySelector);
+            }
+            else
+            {
+                sorted = nations.OrderBy(keySelector);
+            }
+
+            return sorted.ToList();
+        }
+
+        /// <summary>
+        /// Get the key selector function for the current sort type.
+        /// </summary>
+        private Func<TINationState, object> GetSortKeySelector(TIFactionState playerFaction)
+        {
+            switch (currentSort)
+            {
+                case SortNationDataBy.Alfa:
+                    return n => n.displayName ?? "";
+
+                case SortNationDataBy.MyControlPoints:
+                    return n => n.controlPoints?.Count(cp => cp.faction == playerFaction) ?? 0;
+
+                case SortNationDataBy.HighestPopularity:
+                    return n => GetHighestPopularity(n);
+
+                case SortNationDataBy.MyPopularity:
+                    return n => GetMyPopularity(n, playerFaction);
+
+                case SortNationDataBy.Population:
+                    return n => n.population;
+
+                case SortNationDataBy.GDP:
+                case SortNationDataBy.Difficulty:
+                    return n => n.GDP;
+
+                case SortNationDataBy.PerCapitaGDP:
+                    return n => n.perCapitaGDP;
+
+                case SortNationDataBy.Government:
+                    return n => n.democracy;
+
+                case SortNationDataBy.Education:
+                    return n => n.education;
+
+                case SortNationDataBy.Inequality:
+                    return n => n.inequality;
+
+                case SortNationDataBy.Cohesion:
+                    return n => n.cohesion;
+
+                case SortNationDataBy.Unrest:
+                    return n => n.unrest;
+
+                case SortNationDataBy.Funding:
+                    return n => n.spaceFunding_month;
+
+                case SortNationDataBy.Research:
+                    return n => n.research_month;
+
+                case SortNationDataBy.Boost:
+                    return n => n.boostIncome_month_dekatons;
+
+                case SortNationDataBy.MissionControl:
+                    return n => n.missionControl;
+
+                case SortNationDataBy.Miltech:
+                    return n => n.militaryTechLevel;
+
+                case SortNationDataBy.Armies:
+                    return n => n.armies?.Count ?? 0;
+
+                case SortNationDataBy.Navies:
+                    return n => n.numNavies;
+
+                case SortNationDataBy.STOFighters:
+                    return n => n.numSTOFighters;
+
+                case SortNationDataBy.NuclearWeapons:
+                    return n => n.numNuclearWeapons;
+
+                case SortNationDataBy.InvestmentPoints:
+                    return n => n.BaseInvestmentPoints_month();
+
+                case SortNationDataBy.Sustainability:
+                    return n => n.sustainability;
+
+                case SortNationDataBy.Wars:
+                    return n => n.wars?.Count ?? 0;
+
+                default:
+                    return n => n.displayName ?? "";
+            }
+        }
+
+        private float GetHighestPopularity(TINationState nation)
+        {
+            try
+            {
+                var activeIdeologies = GameStateManager.ActiveHumanIdeologies();
+                if (activeIdeologies == null)
+                    return 0;
+
+                return activeIdeologies
+                    .Where(t => t.ideology != FactionIdeology.Undecided)
+                    .Max(t => nation.GetPublicOpinionOfFaction(t.ideology));
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private float GetMyPopularity(TINationState nation, TIFactionState faction)
+        {
+            try
+            {
+                if (faction?.ideology == null)
+                    return 0;
+                return nation.GetPublicOpinionOfFaction(faction.ideology.ideology);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// Start the sort selection process with category menu.
+        /// </summary>
+        public void StartSortSelection()
+        {
+            var categories = new List<SelectionOption>
+            {
+                new SelectionOption { Label = "Basic", DetailText = "Alphabetical, Control Points, Population, Wars", Data = "Basic" },
+                new SelectionOption { Label = "Economic", DetailText = "GDP, Per Capita, Investment Points, Sustainability", Data = "Economic" },
+                new SelectionOption { Label = "Social", DetailText = "Government, Education, Inequality, Cohesion, Unrest", Data = "Social" },
+                new SelectionOption { Label = "Space", DetailText = "Funding, Research, Boost, Mission Control", Data = "Space" },
+                new SelectionOption { Label = "Military", DetailText = "Miltech, Armies, Navies, STO Fighters, Nuclear", Data = "Military" },
+                new SelectionOption { Label = "Faction Control", DetailText = "Highest Popularity, My Popularity", Data = "Faction" }
+            };
+
+            OnEnterSelectionMode?.Invoke("Select sort category", categories, SelectSortCategory);
+        }
+
+        private void SelectSortCategory(int index)
+        {
+            var categories = new[] { "Basic", "Economic", "Social", "Space", "Military", "Faction" };
+            if (index < 0 || index >= categories.Length)
+                return;
+
+            pendingSortOptions = GetSortOptionsForCategory(categories[index]);
+            OnEnterSelectionMode?.Invoke($"Select {categories[index]} sort", pendingSortOptions, ApplySortSelection);
+        }
+
+        private List<SelectionOption> GetSortOptionsForCategory(string category)
+        {
+            var options = new List<SelectionOption>();
+
+            switch (category)
+            {
+                case "Basic":
+                    options.Add(CreateSortOption("Alphabetical", SortNationDataBy.Alfa));
+                    options.Add(CreateSortOption("My Control Points", SortNationDataBy.MyControlPoints));
+                    options.Add(CreateSortOption("Population", SortNationDataBy.Population));
+                    options.Add(CreateSortOption("Wars", SortNationDataBy.Wars));
+                    break;
+
+                case "Economic":
+                    options.Add(CreateSortOption("GDP", SortNationDataBy.GDP));
+                    options.Add(CreateSortOption("Per Capita GDP", SortNationDataBy.PerCapitaGDP));
+                    options.Add(CreateSortOption("Investment Points", SortNationDataBy.InvestmentPoints));
+                    options.Add(CreateSortOption("Sustainability", SortNationDataBy.Sustainability));
+                    break;
+
+                case "Social":
+                    options.Add(CreateSortOption("Government (Democracy)", SortNationDataBy.Government));
+                    options.Add(CreateSortOption("Education", SortNationDataBy.Education));
+                    options.Add(CreateSortOption("Inequality", SortNationDataBy.Inequality));
+                    options.Add(CreateSortOption("Cohesion", SortNationDataBy.Cohesion));
+                    options.Add(CreateSortOption("Unrest", SortNationDataBy.Unrest));
+                    break;
+
+                case "Space":
+                    options.Add(CreateSortOption("Space Funding", SortNationDataBy.Funding));
+                    options.Add(CreateSortOption("Research", SortNationDataBy.Research));
+                    options.Add(CreateSortOption("Boost", SortNationDataBy.Boost));
+                    options.Add(CreateSortOption("Mission Control", SortNationDataBy.MissionControl));
+                    break;
+
+                case "Military":
+                    options.Add(CreateSortOption("Military Tech", SortNationDataBy.Miltech));
+                    options.Add(CreateSortOption("Armies", SortNationDataBy.Armies));
+                    options.Add(CreateSortOption("Navies", SortNationDataBy.Navies));
+                    options.Add(CreateSortOption("STO Fighters", SortNationDataBy.STOFighters));
+                    options.Add(CreateSortOption("Nuclear Weapons", SortNationDataBy.NuclearWeapons));
+                    break;
+
+                case "Faction":
+                    options.Add(CreateSortOption("Highest Popularity", SortNationDataBy.HighestPopularity));
+                    options.Add(CreateSortOption("My Popularity", SortNationDataBy.MyPopularity));
+                    break;
+            }
+
+            return options;
+        }
+
+        private SelectionOption CreateSortOption(string label, SortNationDataBy sortBy)
+        {
+            string currentMarker = (currentSort == sortBy) ? " (current)" : "";
+            return new SelectionOption
+            {
+                Label = $"{label}{currentMarker}",
+                DetailText = $"Sort nations by {label.ToLower()}",
+                Data = sortBy
+            };
+        }
+
+        private void ApplySortSelection(int index)
+        {
+            if (pendingSortOptions == null || index < 0 || index >= pendingSortOptions.Count)
+                return;
+
+            var selectedOption = pendingSortOptions[index];
+            if (selectedOption.Data is SortNationDataBy sortBy)
+            {
+                ApplySort(sortBy);
+            }
+
+            pendingSortOptions = null;
+        }
+
+        /// <summary>
+        /// Apply a sort option selected from the menu.
+        /// </summary>
+        public void ApplySort(SortNationDataBy sortBy)
+        {
+            // If selecting the same sort, toggle direction
+            if (currentSort == sortBy)
+            {
+                sortDescending = !sortDescending;
+            }
+            else
+            {
+                currentSort = sortBy;
+                // Default to descending for numeric fields, ascending for alphabetical
+                sortDescending = (sortBy != SortNationDataBy.Alfa);
+            }
+
+            Refresh();
+            string direction = sortDescending ? "descending" : "ascending";
+            OnSpeak?.Invoke($"Sorted by {GetSortDisplayName(sortBy)}, {direction}", true);
+        }
+
+        /// <summary>
+        /// Cycle to the next faction filter.
+        /// </summary>
+        public void CycleFactionFilter()
+        {
+            var factions = GetAllFactions();
+            int maxIndex = 2 + factions.Count; // All, Mine, Uncontrolled, + each faction
+
+            filterIndex = (filterIndex + 1) % (maxIndex + 1);
+
+            if (filterIndex == 0)
+            {
+                filterFaction = null;
+                OnSpeak?.Invoke("Filter: All nations", true);
+            }
+            else if (filterIndex == 1)
+            {
+                filterFaction = null;
+                OnSpeak?.Invoke("Filter: Nations I control", true);
+            }
+            else if (filterIndex == 2)
+            {
+                filterFaction = null;
+                OnSpeak?.Invoke("Filter: Uncontrolled nations", true);
+            }
+            else
+            {
+                int factionIdx = filterIndex - 3;
+                if (factionIdx >= 0 && factionIdx < factions.Count)
+                {
+                    filterFaction = factions[factionIdx];
+                    OnSpeak?.Invoke($"Filter: {filterFaction.displayName} nations", true);
+                }
+            }
+
+            Refresh();
+        }
+
+        private List<TIFactionState> GetAllFactions()
+        {
+            try
+            {
+                return GameStateManager.AllHumanFactions()?.ToList() ?? new List<TIFactionState>();
+            }
+            catch
+            {
+                return new List<TIFactionState>();
+            }
+        }
+
+        /// <summary>
+        /// Get display name for a sort type.
+        /// </summary>
+        public string GetSortDisplayName(SortNationDataBy sortBy)
+        {
+            switch (sortBy)
+            {
+                case SortNationDataBy.Alfa: return "Alphabetical";
+                case SortNationDataBy.MyControlPoints: return "My Control Points";
+                case SortNationDataBy.HighestPopularity: return "Highest Popularity";
+                case SortNationDataBy.MyPopularity: return "My Popularity";
+                case SortNationDataBy.Population: return "Population";
+                case SortNationDataBy.GDP: return "GDP";
+                case SortNationDataBy.Difficulty: return "Difficulty";
+                case SortNationDataBy.PerCapitaGDP: return "Per Capita GDP";
+                case SortNationDataBy.Government: return "Government";
+                case SortNationDataBy.Education: return "Education";
+                case SortNationDataBy.Inequality: return "Inequality";
+                case SortNationDataBy.Cohesion: return "Cohesion";
+                case SortNationDataBy.Unrest: return "Unrest";
+                case SortNationDataBy.Funding: return "Space Funding";
+                case SortNationDataBy.Research: return "Research";
+                case SortNationDataBy.Boost: return "Boost";
+                case SortNationDataBy.MissionControl: return "Mission Control";
+                case SortNationDataBy.Miltech: return "Military Tech";
+                case SortNationDataBy.Armies: return "Armies";
+                case SortNationDataBy.Navies: return "Navies";
+                case SortNationDataBy.STOFighters: return "STO Fighters";
+                case SortNationDataBy.NuclearWeapons: return "Nuclear Weapons";
+                case SortNationDataBy.InvestmentPoints: return "Investment Points";
+                case SortNationDataBy.Sustainability: return "Sustainability";
+                case SortNationDataBy.Wars: return "Wars";
+                default: return sortBy.ToString();
+            }
+        }
+
+        /// <summary>
+        /// Get the current sort description for announcements.
+        /// </summary>
+        public string GetCurrentSortDescription()
+        {
+            string direction = sortDescending ? "descending" : "ascending";
+            return $"{GetSortDisplayName(currentSort)}, {direction}";
+        }
+
+        #endregion
 
         #region Priority Management (Legacy - kept for reference)
 

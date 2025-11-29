@@ -391,6 +391,20 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
+            // Sort (Ctrl+S) - open sort menu on Nations screen
+            if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.S))
+            {
+                if (HandleNationSort())
+                    return true;
+            }
+
+            // Filter (Ctrl+F) - cycle faction filter on Nations screen
+            if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.F))
+            {
+                if (HandleNationFilter())
+                    return true;
+            }
+
             // Letter navigation (A-Z) - jump to item starting with that letter
             if (navigation.CurrentLevel == NavigationLevel.Items)
             {
@@ -440,6 +454,35 @@ namespace TISpeech.ReviewMode
             // Reset item index since the list has changed
             navigation.ResetItemIndex();
             TISpeechMod.Speak(announcement, interrupt: true);
+        }
+
+        /// <summary>
+        /// Handle sort request - only works on Nations screen
+        /// </summary>
+        private bool HandleNationSort()
+        {
+            var screen = navigation.CurrentScreen as Screens.NationScreen;
+            if (screen == null)
+                return false;
+
+            // Enter selection mode for sort category
+            screen.StartSortSelection();
+            return true;
+        }
+
+        /// <summary>
+        /// Handle filter request - only works on Nations screen
+        /// </summary>
+        private bool HandleNationFilter()
+        {
+            var screen = navigation.CurrentScreen as Screens.NationScreen;
+            if (screen == null)
+                return false;
+
+            screen.CycleFactionFilter();
+            // Reset item index since the list has changed
+            navigation.ResetItemIndex();
+            return true;
         }
 
         private char? GetPressedLetter()
