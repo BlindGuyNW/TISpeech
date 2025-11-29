@@ -43,6 +43,10 @@ namespace TISpeech.ReviewMode
         private NotificationSubMode notificationMode = null;
         public bool IsInNotificationMode => notificationMode != null;
 
+        // Policy selection sub-mode (for Set National Policy mission results)
+        private PolicySelectionMode policyMode = null;
+        public bool IsInPolicyMode => policyMode != null;
+
         // Debouncing
         private float lastInputTime = 0f;
         private const float INPUT_DEBOUNCE = 0.15f;
@@ -143,9 +147,14 @@ namespace TISpeech.ReviewMode
 
                 bool inputHandled = false;
 
-                // Priority order: Notification > Selection > Grid > Navigation
-                // If in notification sub-mode, handle notification input first
-                if (notificationMode != null)
+                // Priority order: Policy > Notification > Selection > Grid > Navigation
+                // Policy mode takes highest priority (handles Set National Policy mission results)
+                if (policyMode != null)
+                {
+                    inputHandled = HandlePolicyModeInput();
+                }
+                // If in notification sub-mode, handle notification input
+                else if (notificationMode != null)
                 {
                     inputHandled = HandleNotificationModeInput();
                 }
@@ -225,6 +234,8 @@ namespace TISpeech.ReviewMode
                 isActive = false;
                 selectionMode = null;
                 gridMode = null;
+                notificationMode = null;
+                policyMode = null;
 
                 TISpeechMod.Speak("Review mode off", interrupt: true);
                 MelonLogger.Msg("Review mode deactivated");
@@ -770,6 +781,142 @@ namespace TISpeech.ReviewMode
             }
 
             // Allow time controls even in notification mode
+            if (HandleTimeControls())
+                return true;
+
+            return false;
+        }
+
+        #endregion
+
+        #region Policy Selection Sub-Mode
+
+        /// <summary>
+        /// Enter policy selection mode. Called by patch when Set National Policy mission succeeds.
+        /// </summary>
+        public void EnterPolicySelectionMode(PavonisInteractive.TerraInvicta.NotificationScreenController controller, TINationState nation, TICouncilorState councilor)
+        {
+            try
+            {
+                if (controller == null || nation == null)
+                {
+                    MelonLogger.Error("EnterPolicySelectionMode: controller or nation is null");
+                    return;
+                }
+
+                policyMode = new PolicySelectionMode(controller, nation, councilor);
+
+                if (policyMode.Policies.Count == 0)
+                {
+                    MelonLogger.Msg("No policies available, staying in standard Review Mode");
+                    policyMode = null;
+                    return;
+                }
+
+                TISpeechMod.Speak(policyMode.GetEntryAnnouncement(), interrupt: true);
+                MelonLogger.Msg($"Entered policy selection mode for {nation.displayName} with {policyMode.Policies.Count} policies");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error entering policy selection mode: {ex.Message}");
+                policyMode = null;
+            }
+        }
+
+        /// <summary>
+        /// Exit policy selection mode. Called by patch when policy panels are shut down.
+        /// </summary>
+        public void ExitPolicySelectionMode()
+        {
+            if (policyMode == null)
+                return;
+
+            policyMode = null;
+            MelonLogger.Msg("Exited policy selection mode");
+        }
+
+        private bool HandlePolicyModeInput()
+        {
+            if (policyMode == null) return false;
+
+            // Navigate options (Numpad 8/2 or 4/6)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4))
+            {
+                policyMode.Previous();
+                TISpeechMod.Speak(policyMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6))
+            {
+                policyMode.Next();
+                TISpeechMod.Speak(policyMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Activate selected option (Enter or Numpad 5)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
+            {
+                bool continueMode = policyMode.Activate();
+                if (!continueMode)
+                {
+                    // Policy was confirmed or mode should exit
+                    policyMode = null;
+                }
+                return true;
+            }
+
+            // Read current option detail (Numpad *)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply))
+            {
+                TISpeechMod.Speak(policyMode.GetCurrentDetail(), interrupt: true);
+                return true;
+            }
+
+            // List all options (Numpad /)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide))
+            {
+                TISpeechMod.Speak(policyMode.ListAll(), interrupt: true);
+                return true;
+            }
+
+            // Go back (Escape)
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                bool stayInMode = policyMode.GoBack();
+                if (!stayInMode)
+                {
+                    // At the beginning of policy selection - exit mode entirely
+                    TISpeechMod.Speak("Cancelled policy selection", interrupt: true);
+                    policyMode = null;
+                }
+                return true;
+            }
+
+            // Block Numpad 0 (don't allow exiting Review Mode while in policy selection)
+            if (Input.GetKeyDown(KeyCode.Keypad0))
+            {
+                TISpeechMod.Speak("Cannot exit Review Mode during policy selection. Press Escape to cancel.", interrupt: true);
+                return true;
+            }
+
+            // Letter navigation (A-Z) - jump to option starting with that letter
+            char? letter = GetPressedLetter();
+            if (letter.HasValue)
+            {
+                int newIndex = policyMode.FindNextByLetter(letter.Value);
+                if (newIndex >= 0)
+                {
+                    policyMode.SetIndex(newIndex);
+                    TISpeechMod.Speak(policyMode.GetCurrentAnnouncement(), interrupt: true);
+                }
+                else
+                {
+                    TISpeechMod.Speak($"No options starting with {letter.Value}", interrupt: true);
+                }
+                return true;
+            }
+
+            // Allow time controls even in policy mode
             if (HandleTimeControls())
                 return true;
 

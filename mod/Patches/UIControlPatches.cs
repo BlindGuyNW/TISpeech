@@ -1535,5 +1535,77 @@ namespace TISpeech.Patches
         }
 
         #endregion
+
+        #region Policy Selection Patches
+
+        /// <summary>
+        /// Patch NotificationScreenController.OnSetPolicyMission to enter policy selection mode when Review Mode is active.
+        /// This is called when the Set National Policy mission succeeds.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "OnSetPolicyMission")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_OnSetPolicyMission_Postfix(NotificationScreenController __instance, TICouncilorState councilor)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                // Only enter policy mode if Review Mode is active
+                var reviewMode = ReviewMode.ReviewModeController.Instance;
+                if (reviewMode == null || !reviewMode.IsActive)
+                {
+                    MelonLogger.Msg("Policy selection appeared but Review Mode is not active - skipping policy mode");
+                    return;
+                }
+
+                // Get the nation from the councilor
+                var nation = councilor?.currentNation;
+                if (nation == null)
+                {
+                    MelonLogger.Error("OnSetPolicyMission: councilor or nation is null");
+                    return;
+                }
+
+                // Exit notification mode if we're in it (policy selection replaces notification handling)
+                if (reviewMode.IsInNotificationMode)
+                {
+                    reviewMode.ExitNotificationMode();
+                }
+
+                // Enter policy selection mode
+                reviewMode.EnterPolicySelectionMode(__instance, nation, councilor);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in OnSetPolicyMission patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch NotificationScreenController.ShutdownPolicyPanels to exit policy selection mode.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "ShutdownPolicyPanels")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_ShutdownPolicyPanels_Postfix()
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                var reviewMode = ReviewMode.ReviewModeController.Instance;
+                if (reviewMode?.IsInPolicyMode == true)
+                {
+                    reviewMode.ExitPolicySelectionMode();
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in ShutdownPolicyPanels patch: {ex.Message}");
+            }
+        }
+
+        #endregion
     }
 }
