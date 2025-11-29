@@ -10,6 +10,8 @@ using PavonisInteractive.TerraInvicta.Actions;
 using PavonisInteractive.TerraInvicta.Systems.GameTime;
 using TISpeech.ReviewMode.Screens;
 using TISpeech.ReviewMode.Sections;
+using TISpeech.ReviewMode.MenuMode;
+using TISpeech.ReviewMode.MenuMode.Screens;
 
 namespace TISpeech.ReviewMode
 {
@@ -47,6 +49,14 @@ namespace TISpeech.ReviewMode
         // Policy selection sub-mode (for Set National Policy mission results)
         private PolicySelectionMode policyMode = null;
         public bool IsInPolicyMode => policyMode != null;
+
+        // Menu mode (for pre-game menu navigation)
+        private bool isInMenuMode = false;
+        public bool IsInMenuMode => isInMenuMode;
+        private List<MenuScreenBase> menuScreens = new List<MenuScreenBase>();
+        private int currentMenuScreenIndex = 0;
+        private int currentMenuControlIndex = 0;
+        private Stack<MenuContext> menuContextStack = new Stack<MenuContext>();
 
         // Debouncing
         private float lastInputTime = 0f;
@@ -92,7 +102,7 @@ namespace TISpeech.ReviewMode
 
         private void InitializeScreens()
         {
-            // Create screens
+            // Create in-game screens
             councilScreen = new CouncilScreen();
             councilScreen.OnEnterSelectionMode = EnterSelectionMode;
             councilScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
@@ -110,7 +120,7 @@ namespace TISpeech.ReviewMode
             orgMarketScreen.OnEnterSelectionMode = EnterSelectionMode;
             orgMarketScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
-            // Register screens with navigation
+            // Register in-game screens with navigation
             var screens = new List<ScreenBase>
             {
                 councilScreen,
@@ -120,7 +130,48 @@ namespace TISpeech.ReviewMode
             };
 
             navigation.RegisterScreens(screens);
-            MelonLogger.Msg($"Registered {screens.Count} screens for review mode");
+            MelonLogger.Msg($"Registered {screens.Count} in-game screens for review mode");
+
+            // Create menu screens
+            InitializeMenuScreens();
+        }
+
+        private void InitializeMenuScreens()
+        {
+            menuScreens.Clear();
+            menuScreens.Add(new MainMenuScreen());   // 0
+            menuScreens.Add(new LoadGameScreen());   // 1
+            menuScreens.Add(new NewGameScreen());    // 2
+            menuScreens.Add(new OptionsScreen());    // 3
+            menuScreens.Add(new SkirmishScreen());   // 4
+            menuScreens.Add(new ModsScreen());       // 5
+            MelonLogger.Msg($"Registered {menuScreens.Count} menu screens for menu mode");
+        }
+
+        /// <summary>
+        /// Get the appropriate menu screen based on current game state.
+        /// Returns the index of the screen to use.
+        /// </summary>
+        private int GetActiveMenuScreenIndex()
+        {
+            // Check for specific sub-menus first (most specific to least)
+            if (LoadGameScreen.IsVisible())
+                return 1; // LoadGameScreen
+
+            if (NewGameScreen.IsVisible())
+                return 2; // NewGameScreen
+
+            if (OptionsScreen.IsVisible())
+                return 3; // OptionsScreen
+
+            if (SkirmishScreen.IsVisible())
+                return 4; // SkirmishScreen
+
+            if (ModsScreen.IsVisible())
+                return 5; // ModsScreen
+
+            // Default to main menu
+            return 0; // MainMenuScreen
         }
 
         #endregion
@@ -133,6 +184,64 @@ namespace TISpeech.ReviewMode
                 DeactivateReviewMode();
             else
                 ActivateReviewMode();
+        }
+
+        /// <summary>
+        /// Switch to a specific menu screen by name.
+        /// Called by menu screens when the user activates a button that opens a sub-menu.
+        /// </summary>
+        public void SwitchToMenuScreen(string screenName)
+        {
+            if (!isInMenuMode || menuScreens.Count == 0)
+                return;
+
+            for (int i = 0; i < menuScreens.Count; i++)
+            {
+                if (menuScreens[i].Name == screenName)
+                {
+                    // Deactivate the previous screen
+                    if (currentMenuScreenIndex >= 0 && currentMenuScreenIndex < menuScreens.Count)
+                    {
+                        menuScreens[currentMenuScreenIndex].OnDeactivate();
+                    }
+
+                    currentMenuScreenIndex = i;
+                    currentMenuControlIndex = 0;
+                    var screen = menuScreens[i];
+                    screen.OnActivate();
+
+                    string announcement = screen.GetActivationAnnouncement();
+                    TISpeechMod.Speak(announcement, interrupt: true);
+
+                    if (screen.ControlCount > 0)
+                    {
+                        string firstControl = screen.ReadControl(0);
+                        TISpeechMod.Speak($"1 of {screen.ControlCount}: {firstControl}", interrupt: false);
+                    }
+
+                    MelonLogger.Msg($"Switched to menu screen: {screenName}");
+                    return;
+                }
+            }
+
+            MelonLogger.Warning($"Menu screen not found: {screenName}");
+        }
+
+        /// <summary>
+        /// Go back to the main menu screen.
+        /// </summary>
+        public void ReturnToMainMenu()
+        {
+            SwitchToMenuScreen("Main Menu");
+        }
+
+        /// <summary>
+        /// Reset the menu control index to 0. Called by screens when their
+        /// control list changes significantly (e.g., confirmation dialog appears).
+        /// </summary>
+        public void ResetMenuControlIndex()
+        {
+            currentMenuControlIndex = 0;
         }
 
         public void CheckInput()
@@ -148,9 +257,14 @@ namespace TISpeech.ReviewMode
 
                 bool inputHandled = false;
 
+                // If in menu mode, use menu input handler
+                if (isInMenuMode)
+                {
+                    inputHandled = HandleMenuModeInput();
+                }
                 // Priority order: Policy > Notification > Selection > Grid > Navigation
                 // Policy mode takes highest priority (handles Set National Policy mission results)
-                if (policyMode != null)
+                else if (policyMode != null)
                 {
                     inputHandled = HandlePolicyModeInput();
                 }
@@ -193,32 +307,20 @@ namespace TISpeech.ReviewMode
         {
             try
             {
+                // Check context: main menu vs in-game
+                if (IsInMainMenu())
+                {
+                    ActivateMenuMode();
+                    return;
+                }
+
                 if (!IsGameReady())
                 {
                     TISpeechMod.Speak("Game not ready for review mode", interrupt: true);
                     return;
                 }
 
-                TIInputManager.BlockKeybindings();
-                isActive = true;
-
-                // Reset navigation to initial state (Council screen)
-                navigation.Reset();
-
-                // Announce activation
-                var screen = navigation.CurrentScreen;
-                if (screen != null)
-                {
-                    string announcement = $"Review mode. {screen.GetActivationAnnouncement()} ";
-                    announcement += "Use arrows or Numpad to navigate, Enter to drill in, Escape to back out.";
-                    TISpeechMod.Speak(announcement, interrupt: true);
-                }
-                else
-                {
-                    TISpeechMod.Speak("Review mode. No screens available.", interrupt: true);
-                }
-
-                MelonLogger.Msg("Review mode activated with hierarchical navigation");
+                ActivateInGameMode();
             }
             catch (Exception ex)
             {
@@ -227,16 +329,83 @@ namespace TISpeech.ReviewMode
             }
         }
 
+        private void ActivateInGameMode()
+        {
+            TIInputManager.BlockKeybindings();
+            isActive = true;
+            isInMenuMode = false;
+
+            // Reset navigation to initial state (Council screen)
+            navigation.Reset();
+
+            // Announce activation
+            var screen = navigation.CurrentScreen;
+            if (screen != null)
+            {
+                string announcement = $"Review mode. {screen.GetActivationAnnouncement()} ";
+                announcement += "Use arrows or Numpad to navigate, Enter to drill in, Escape to back out.";
+                TISpeechMod.Speak(announcement, interrupt: true);
+            }
+            else
+            {
+                TISpeechMod.Speak("Review mode. No screens available.", interrupt: true);
+            }
+
+            MelonLogger.Msg("Review mode activated (in-game) with hierarchical navigation");
+        }
+
+        private void ActivateMenuMode()
+        {
+            isActive = true;
+            isInMenuMode = true;
+            currentMenuControlIndex = 0;
+            menuContextStack.Clear();
+
+            // Always start at the main menu screen - we control our own state
+            currentMenuScreenIndex = 0;
+
+            // Refresh the current menu screen
+            if (menuScreens.Count > 0 && currentMenuScreenIndex < menuScreens.Count)
+            {
+                var screen = menuScreens[currentMenuScreenIndex];
+                screen.OnActivate();
+
+                string announcement = $"Menu navigation. {screen.GetActivationAnnouncement()} ";
+                announcement += "Use arrows to navigate, Enter to activate, Escape to exit.";
+                TISpeechMod.Speak(announcement, interrupt: true);
+
+                // Also announce first control if there are any
+                if (screen.ControlCount > 0)
+                {
+                    string firstControl = screen.ReadControl(0);
+                    TISpeechMod.Speak($"1 of {screen.ControlCount}: {firstControl}", interrupt: false);
+                }
+            }
+            else
+            {
+                TISpeechMod.Speak("Menu navigation. No menus available.", interrupt: true);
+            }
+
+            MelonLogger.Msg($"Menu mode activated with screen index {currentMenuScreenIndex}");
+        }
+
         private void DeactivateReviewMode()
         {
             try
             {
-                TIInputManager.RestoreKeybindings();
+                // Only restore keybindings if we were in in-game mode
+                if (!isInMenuMode)
+                {
+                    TIInputManager.RestoreKeybindings();
+                }
+
                 isActive = false;
+                isInMenuMode = false;
                 selectionMode = null;
                 gridMode = null;
                 notificationMode = null;
                 policyMode = null;
+                menuContextStack.Clear();
 
                 TISpeechMod.Speak("Review mode off", interrupt: true);
                 MelonLogger.Msg("Review mode deactivated");
@@ -421,6 +590,187 @@ namespace TISpeech.ReviewMode
                 return true;
 
             return false;
+        }
+
+        /// <summary>
+        /// Check if menu context has changed and switch screens if needed.
+        /// Called every frame before debounce to catch menu transitions.
+        /// </summary>
+        private void CheckMenuContextChange()
+        {
+            if (menuScreens.Count == 0)
+                return;
+
+            int newScreenIndex = GetActiveMenuScreenIndex();
+            bool screenChanged = newScreenIndex != currentMenuScreenIndex;
+
+            // Also check if the current screen's internal state has changed (e.g., dialog opened)
+            bool stateChanged = false;
+            if (!screenChanged && currentMenuScreenIndex < menuScreens.Count)
+            {
+                var currentScreen = menuScreens[currentMenuScreenIndex];
+                if (currentScreen is LoadGameScreen loadScreen)
+                {
+                    stateChanged = loadScreen.HasStateChanged();
+                }
+                // Add similar checks for other screens with dialogs as needed
+            }
+
+            if (screenChanged || stateChanged)
+            {
+                // Context or state changed - refresh the screen
+                currentMenuScreenIndex = newScreenIndex;
+                currentMenuControlIndex = 0;
+
+                if (currentMenuScreenIndex < menuScreens.Count)
+                {
+                    var newScreen = menuScreens[currentMenuScreenIndex];
+                    newScreen.OnActivate();
+
+                    string announcement = $"{newScreen.GetActivationAnnouncement()}";
+                    TISpeechMod.Speak(announcement, interrupt: true);
+
+                    // Announce first control
+                    if (newScreen.ControlCount > 0)
+                    {
+                        string firstControl = newScreen.ReadControl(0);
+                        TISpeechMod.Speak($"1 of {newScreen.ControlCount}: {firstControl}", interrupt: false);
+                    }
+
+                    MelonLogger.Msg($"Menu context changed to screen {currentMenuScreenIndex}: {newScreen.Name} (screenChanged={screenChanged}, stateChanged={stateChanged})");
+                }
+            }
+        }
+
+        private bool HandleMenuModeInput()
+        {
+            if (menuScreens.Count == 0 || currentMenuScreenIndex >= menuScreens.Count)
+                return false;
+
+            var screen = menuScreens[currentMenuScreenIndex];
+            int controlCount = screen.ControlCount;
+
+            // Navigate up/previous (Numpad 8, Up arrow)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                if (controlCount > 0)
+                {
+                    currentMenuControlIndex--;
+                    if (currentMenuControlIndex < 0)
+                        currentMenuControlIndex = controlCount - 1;
+                    AnnounceCurrentMenuControl();
+                }
+                return true;
+            }
+
+            // Navigate down/next (Numpad 2, Down arrow)
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                if (controlCount > 0)
+                {
+                    currentMenuControlIndex++;
+                    if (currentMenuControlIndex >= controlCount)
+                        currentMenuControlIndex = 0;
+                    AnnounceCurrentMenuControl();
+                }
+                return true;
+            }
+
+            // Adjust control left (Numpad 4, Left arrow) - for sliders/dropdowns
+            if (Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.LeftArrow))
+            {
+                if (screen.CanAdjustControl(currentMenuControlIndex))
+                {
+                    screen.AdjustControl(currentMenuControlIndex, increment: false);
+                }
+                return true;
+            }
+
+            // Adjust control right (Numpad 6, Right arrow) - for sliders/dropdowns
+            if (Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                if (screen.CanAdjustControl(currentMenuControlIndex))
+                {
+                    screen.AdjustControl(currentMenuControlIndex, increment: true);
+                }
+                return true;
+            }
+
+            // Activate control (Numpad Enter, Numpad 5, Enter)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return))
+            {
+                screen.ActivateControl(currentMenuControlIndex);
+                return true;
+            }
+
+            // Back out / Exit (Escape)
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                // If on a sub-screen, go back to main menu
+                if (currentMenuScreenIndex > 0)
+                {
+                    ReturnToMainMenu();
+                }
+                else
+                {
+                    // At main menu - deactivate menu mode
+                    DeactivateReviewMode();
+                }
+                return true;
+            }
+
+            // Read detail (Numpad *, Minus/Dash key)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                string detail = screen.ReadControlDetail(currentMenuControlIndex);
+                TISpeechMod.Speak(detail, interrupt: true);
+                return true;
+            }
+
+            // List all controls (Numpad /, Equals key)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
+            {
+                TISpeechMod.Speak(screen.ListAllControls(), interrupt: true);
+                return true;
+            }
+
+            // Letter navigation (A-Z) - jump to control starting with that letter
+            char? letter = GetPressedLetter();
+            if (letter.HasValue)
+            {
+                int newIndex = screen.FindNextControlByLetter(letter.Value, currentMenuControlIndex);
+                if (newIndex >= 0)
+                {
+                    currentMenuControlIndex = newIndex;
+                    AnnounceCurrentMenuControl();
+                }
+                else
+                {
+                    TISpeechMod.Speak($"No controls starting with {letter.Value}", interrupt: true);
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        private void AnnounceCurrentMenuControl()
+        {
+            if (menuScreens.Count == 0 || currentMenuScreenIndex >= menuScreens.Count)
+                return;
+
+            var screen = menuScreens[currentMenuScreenIndex];
+            int controlCount = screen.ControlCount;
+
+            if (controlCount == 0)
+            {
+                TISpeechMod.Speak("No controls", interrupt: true);
+                return;
+            }
+
+            string controlText = screen.ReadControl(currentMenuControlIndex);
+            TISpeechMod.Speak($"{currentMenuControlIndex + 1} of {controlCount}: {controlText}", interrupt: true);
         }
 
         private void HandleViewModeToggle()
@@ -1341,7 +1691,31 @@ namespace TISpeech.ReviewMode
                    GameControl.control.activePlayer != null;
         }
 
+        /// <summary>
+        /// Check if we're in the main menu (pre-game) rather than in-game.
+        /// </summary>
+        private bool IsInMainMenu()
+        {
+            // StartMenuController exists when we're in the main menu scene
+            return UnityEngine.Object.FindObjectOfType<StartMenuController>() != null &&
+                   (GameControl.control == null || GameControl.control.activePlayer == null);
+        }
+
         #endregion
+    }
+
+    /// <summary>
+    /// Menu context for tracking position in menu hierarchy.
+    /// </summary>
+    public enum MenuContext
+    {
+        MainMenu,
+        LoadGame,
+        NewGame,
+        Options,
+        Skirmish,
+        Mods,
+        Credits
     }
 
     #region Selection Sub-Mode Types
