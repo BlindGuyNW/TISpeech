@@ -501,6 +501,23 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
+            // Letter navigation (A-Z) - jump to option starting with that letter
+            char? letter = GetPressedLetter();
+            if (letter.HasValue)
+            {
+                int newIndex = selectionMode.FindNextOptionByLetter(letter.Value);
+                if (newIndex >= 0)
+                {
+                    selectionMode.SetIndex(newIndex);
+                    AnnounceSelectionItem();
+                }
+                else
+                {
+                    TISpeechMod.Speak($"No options starting with {letter.Value}", interrupt: true);
+                }
+                return true;
+            }
+
             return false;
         }
 
@@ -1170,6 +1187,43 @@ namespace TISpeech.ReviewMode
             CurrentIndex++;
             if (CurrentIndex >= Options.Count)
                 CurrentIndex = 0;
+        }
+
+        /// <summary>
+        /// Find the next option starting with the given letter after the current index.
+        /// If no more options with that letter exist, wraps to the first one.
+        /// Returns -1 if no option found.
+        /// </summary>
+        public int FindNextOptionByLetter(char letter)
+        {
+            letter = char.ToUpperInvariant(letter);
+
+            // Search from current index + 1 to end
+            for (int i = CurrentIndex + 1; i < Options.Count; i++)
+            {
+                string label = Options[i].Label;
+                if (!string.IsNullOrEmpty(label) && char.ToUpperInvariant(label[0]) == letter)
+                    return i;
+            }
+
+            // Wrap around: search from 0 to current index
+            for (int i = 0; i <= CurrentIndex; i++)
+            {
+                string label = Options[i].Label;
+                if (!string.IsNullOrEmpty(label) && char.ToUpperInvariant(label[0]) == letter)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// Jump to a specific index.
+        /// </summary>
+        public void SetIndex(int index)
+        {
+            if (index >= 0 && index < Options.Count)
+                CurrentIndex = index;
         }
     }
 

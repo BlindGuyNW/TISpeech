@@ -331,22 +331,108 @@ namespace TISpeech.ReviewMode.Screens
                 (index) =>
                 {
                     var selectedTarget = (TIGameState)options[index].Data;
-                    ExecuteMissionAssignment(councilor, mission, selectedTarget);
+
+                    // Check if mission has a resource boost slider
+                    if (mission.cost is TIMissionCost_Bonus)
+                    {
+                        StartBoostSelection(councilor, mission, selectedTarget);
+                    }
+                    else
+                    {
+                        ExecuteMissionAssignment(councilor, mission, selectedTarget, 0f);
+                    }
                 }
             );
         }
 
-        private void ExecuteMissionAssignment(TICouncilorState councilor, TIMissionTemplate mission, TIGameState target)
+        private void StartBoostSelection(TICouncilorState councilor, TIMissionTemplate mission, TIGameState target)
         {
             try
             {
                 var faction = councilor.faction;
-                var action = new AssignCouncilorToMission(councilor, mission, target, 0f, false);
+                int maxSteps = councilor.CurrentMaxSliderSteps(mission);
+                var resourceType = mission.cost.resourceType;
+                string resourceName = GetResourceName(resourceType);
+
+                var options = new List<SelectionOption>();
+
+                for (int step = 0; step <= maxSteps; step++)
+                {
+                    float cost = mission.cost.GetCost(step, councilor);
+                    var breakdown = modifierReader.GetModifiers(mission, councilor, target, step);
+
+                    string label;
+                    if (step == 0)
+                    {
+                        label = $"No boost, {breakdown.SuccessChance}";
+                    }
+                    else
+                    {
+                        label = $"Boost {step}: {cost:F0} {resourceName}, {breakdown.SuccessChance}";
+                    }
+
+                    string detail = modifierReader.FormatForSpeech(breakdown, verbose: true);
+
+                    options.Add(new SelectionOption
+                    {
+                        Label = label,
+                        DetailText = detail,
+                        Data = (float)step  // Store the slider step value
+                    });
+                }
+
+                // Show current resource amount
+                float available = faction.GetCurrentResourceAmount(resourceType);
+                string prompt = $"Select boost level ({available:F0} {resourceName} available)";
+
+                OnEnterSelectionMode?.Invoke(
+                    prompt,
+                    options,
+                    (index) =>
+                    {
+                        float boostLevel = (float)options[index].Data;
+                        ExecuteMissionAssignment(councilor, mission, target, boostLevel);
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in boost selection: {ex.Message}");
+                // Fall back to no boost
+                ExecuteMissionAssignment(councilor, mission, target, 0f);
+            }
+        }
+
+        private string GetResourceName(FactionResource resource)
+        {
+            switch (resource)
+            {
+                case FactionResource.Money: return "Money";
+                case FactionResource.Influence: return "Influence";
+                case FactionResource.Operations: return "Ops";
+                case FactionResource.Research: return "Research";
+                case FactionResource.Boost: return "Boost";
+                default: return resource.ToString();
+            }
+        }
+
+        private void ExecuteMissionAssignment(TICouncilorState councilor, TIMissionTemplate mission, TIGameState target, float resourcesSpent)
+        {
+            try
+            {
+                var faction = councilor.faction;
+                var action = new AssignCouncilorToMission(councilor, mission, target, resourcesSpent, false);
                 faction.playerControl.StartAction(action);
 
                 string announcement = $"Assigned {councilor.displayName} to {mission.displayName}";
                 if (target != null)
                     announcement += $" targeting {target.displayName}";
+                if (resourcesSpent > 0 && mission.cost != null)
+                {
+                    float cost = mission.cost.GetCost(resourcesSpent, councilor);
+                    string resourceName = GetResourceName(mission.cost.resourceType);
+                    announcement += $" with {cost:F0} {resourceName} boost";
+                }
 
                 OnSpeak?.Invoke(announcement, true);
                 MelonLogger.Msg(announcement);
