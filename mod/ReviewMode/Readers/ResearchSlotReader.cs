@@ -373,24 +373,32 @@ namespace TISpeech.ReviewMode.Readers
             var section = new DataSection("Priority");
 
             int priority = faction.researchWeights[slot];
-            section.AddItem("Current Priority", priority.ToString());
+            string priorityName = GetPriorityName(priority);
+            section.AddItem("Current Priority", $"{priority} ({priorityName})");
 
             // Calculate allocation percentage
             float slotShare = faction.FractionWeightInSlot(slot);
             section.AddItem("Research Allocation", $"{slotShare * 100:F1}%");
 
-            // Add priority adjustment actions
-            section.AddItem("Increase Priority", $"Currently {priority} -> {(priority + 1) % 4}", onActivate: () =>
+            // Single cycle action
+            section.AddItem("Cycle Priority", $"Currently {priorityName}", onActivate: () =>
             {
-                IncreasePriority(slot, faction);
-            });
-
-            section.AddItem("Decrease Priority", $"Currently {priority} -> {(priority - 1 + 4) % 4}", onActivate: () =>
-            {
-                DecreasePriority(slot, faction);
+                CyclePriority(slot, faction);
             });
 
             return section;
+        }
+
+        private string GetPriorityName(int priority)
+        {
+            return priority switch
+            {
+                0 => "None",
+                1 => "Low",
+                2 => "Medium",
+                3 => "High",
+                _ => priority.ToString()
+            };
         }
 
         private DataSection BuildContributionsSection(int slot, TIFactionState faction, TIGlobalResearchState globalResearch)
@@ -692,38 +700,22 @@ namespace TISpeech.ReviewMode.Readers
             return section;
         }
 
-        private void IncreasePriority(int slot, TIFactionState faction)
+        private void CyclePriority(int slot, TIFactionState faction)
         {
             try
             {
                 var action = new CycleResearchPriorityAction(faction, slot, decrement: false);
                 faction.playerControl.StartAction(action);
 
-                int newPriority = (faction.researchWeights[slot] + 1) % 4;
-                OnSpeak?.Invoke($"Priority increased to {newPriority}", true);
+                // Read the actual new value from game state (not calculated)
+                int newPriority = faction.researchWeights[slot];
+                string priorityName = GetPriorityName(newPriority);
+                OnSpeak?.Invoke($"Priority: {priorityName}", true);
                 OnRefresh?.Invoke();
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"Error increasing priority: {ex.Message}");
-                OnSpeak?.Invoke("Error changing priority", true);
-            }
-        }
-
-        private void DecreasePriority(int slot, TIFactionState faction)
-        {
-            try
-            {
-                var action = new CycleResearchPriorityAction(faction, slot, decrement: true);
-                faction.playerControl.StartAction(action);
-
-                int newPriority = (faction.researchWeights[slot] - 1 + 4) % 4;
-                OnSpeak?.Invoke($"Priority decreased to {newPriority}", true);
-                OnRefresh?.Invoke();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"Error decreasing priority: {ex.Message}");
+                MelonLogger.Error($"Error cycling priority: {ex.Message}");
                 OnSpeak?.Invoke("Error changing priority", true);
             }
         }
