@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using MelonLoader;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using PavonisInteractive.TerraInvicta;
 using PavonisInteractive.TerraInvicta.Actions;
 using PavonisInteractive.TerraInvicta.Systems.GameTime;
@@ -691,6 +692,10 @@ namespace TISpeech.ReviewMode
                     notificationMode = null;
                     return;
                 }
+
+                // Clear any EventSystem selection to prevent Enter from submitting focused buttons
+                // This is a backup for the check in DialogAnnouncer.FocusFirstInteractable()
+                EventSystem.current?.SetSelectedGameObject(null);
 
                 TISpeechMod.Speak(notificationMode.GetEntryAnnouncement(), interrupt: true);
                 MelonLogger.Msg($"Entered notification mode with {notificationMode.Count} options");

@@ -115,6 +115,12 @@ namespace TISpeech.Patches
 
         private void FocusFirstInteractable()
         {
+            // Don't set EventSystem focus when Review Mode is handling notifications
+            // Otherwise, Enter submits the focused button before our code can handle it
+            var reviewMode = TISpeech.ReviewMode.ReviewModeController.Instance;
+            if (reviewMode != null && reviewMode.IsInNotificationMode)
+                return;
+
             // Find first interactable button
             var buttons = GetComponentsInChildren<Button>(includeInactive: false);
             foreach (var button in buttons)
