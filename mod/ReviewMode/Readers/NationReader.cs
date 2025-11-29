@@ -6,6 +6,9 @@ using MelonLoader;
 using PavonisInteractive.TerraInvicta;
 using TISpeech.ReviewMode.Sections;
 
+// Alias for the nested enum to avoid ambiguity
+using TrackedValue = PavonisInteractive.TerraInvicta.NationInfoController.TrackedValue;
+
 namespace TISpeech.ReviewMode.Readers
 {
     /// <summary>
@@ -84,6 +87,9 @@ namespace TISpeech.ReviewMode.Readers
             // Overview section
             sections.Add(CreateOverviewSection(nation));
 
+            // Public Opinion section - shows faction popularity
+            sections.Add(CreatePublicOpinionSection(nation));
+
             // Your Control Points section (if you have any)
             if (faction != null)
             {
@@ -103,6 +109,9 @@ namespace TISpeech.ReviewMode.Readers
             // Relations section
             sections.Add(CreateRelationsSection(nation));
 
+            // Adjacency section - neighboring nations
+            sections.Add(CreateAdjacencySection(nation));
+
             // Regions section
             if (nation.regions != null && nation.regions.Count > 0)
             {
@@ -118,25 +127,169 @@ namespace TISpeech.ReviewMode.Readers
         {
             var section = new DataSection("Overview");
 
-            section.AddItem("Population", FormatPopulation(nation.population));
-            section.AddItem("GDP", $"${FormatLargeNumber(nation.GDP)}");
-            section.AddItem("GDP per Capita", $"${nation.perCapitaGDP:N0}");
+            // Population with tooltip
+            string populationTooltip = GetCleanTooltip(() => NationInfoController.BuildPopulationTooltip(nation));
+            section.AddItem("Population", FormatPopulation(nation.population), populationTooltip);
+
+            // GDP with tooltip
+            string gdpTooltip = GetCleanTooltip(() => NationInfoController.BuildGDPTooltip(nation));
+            section.AddItem("GDP", $"${FormatLargeNumber(nation.GDP)}", gdpTooltip);
+
+            // GDP per Capita with tooltip
+            string perCapitaTooltip = GetCleanTooltip(() => NationInfoController.BuildPerCapitaGDPTooltip(nation));
+            section.AddItem("GDP per Capita", $"${nation.perCapitaGDP:N0}", perCapitaTooltip);
 
             if (nation.federation != null)
             {
-                section.AddItem("Federation", nation.federation.displayName);
+                string federationTooltip = GetCleanTooltip(() => NationInfoController.BuildSpecialRelationshipTooltip(nation));
+                section.AddItem("Federation", nation.federation.displayName, federationTooltip);
             }
 
             section.AddItem("Capital", nation.capital?.displayName ?? "None");
             section.AddItem("Regions", nation.regions?.Count.ToString() ?? "0");
 
-            // Key stats
-            section.AddItem("Democracy", $"{nation.democracy:F1}");
-            section.AddItem("Cohesion", $"{nation.cohesion:F1}");
-            section.AddItem("Education", $"{nation.education:F1}");
-            section.AddItem("Inequality", $"{nation.inequality:F1}");
-            section.AddItem("Unrest", $"{nation.unrest:F1}");
-            section.AddItem("Sustainability", $"{nation.sustainability:F1}");
+            // Key stats with tooltips
+            string democracyTooltip = GetCleanTooltip(() => NationInfoController.BuildDemocracyTooltip(nation));
+            section.AddItem("Democracy", $"{nation.democracy:F1}", democracyTooltip);
+
+            string cohesionTooltip = GetCleanTooltip(() => NationInfoController.BuildCohesionTooltip(nation));
+            section.AddItem("Cohesion", $"{nation.cohesion:F1}", cohesionTooltip);
+
+            string educationTooltip = GetCleanTooltip(() => NationInfoController.BuildEducationTooltip(nation));
+            section.AddItem("Education", $"{nation.education:F1}", educationTooltip);
+
+            string inequalityTooltip = GetCleanTooltip(() => NationInfoController.BuildInequalityTooltip(nation));
+            section.AddItem("Inequality", $"{nation.inequality:F1}", inequalityTooltip);
+
+            string unrestTooltip = GetCleanTooltip(() => NationInfoController.BuildUnrestTooltip(nation));
+            section.AddItem("Unrest", $"{nation.unrest:F1}", unrestTooltip);
+
+            string sustainabilityTooltip = GetCleanTooltip(() => NationInfoController.BuildSustainabilityTooltip(nation));
+            // Sustainability uses inverse display (1/value), so use game's display method
+            string sustainabilityDisplay = TINationState.SustainabilityValueForDisplay(nation.sustainability);
+            section.AddItem("Sustainability", sustainabilityDisplay, sustainabilityTooltip);
+
+            return section;
+        }
+
+        /// <summary>
+        /// Safely get tooltip text and clean it for screen reader output.
+        /// </summary>
+        private string GetCleanTooltip(Func<string> tooltipBuilder)
+        {
+            try
+            {
+                string tooltip = tooltipBuilder();
+                return TISpeechMod.CleanText(tooltip);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Could not build tooltip: {ex.Message}");
+                return "";
+            }
+        }
+
+        private ISection CreatePublicOpinionSection(TINationState nation)
+        {
+            var section = new DataSection("Public Opinion");
+            var playerFaction = GameControl.control?.activePlayer;
+
+            try
+            {
+                // Get all active human ideologies (the factions in the game)
+                var activeIdeologies = GameStateManager.ActiveHumanIdeologies();
+                if (activeIdeologies == null)
+                {
+                    section.AddItem("Public opinion data unavailable");
+                    return section;
+                }
+
+                // Get the overall public opinion tooltip for detail text
+                string overallTooltip = GetCleanTooltip(() => NationInfoController.BuildPublicOpinionTooltip(nation));
+
+                // Sort by popularity (highest first)
+                var sortedIdeologies = activeIdeologies
+                    .Select(template => new {
+                        Template = template,
+                        Popularity = nation.GetPublicOpinionOfFaction(template.ideology)
+                    })
+                    .OrderByDescending(x => x.Popularity)
+                    .ToList();
+
+                foreach (var item in sortedIdeologies)
+                {
+                    var ideology = item.Template.ideology;
+                    float popularity = item.Popularity;
+                    string percentStr = $"{popularity * 100:F1}%";
+
+                    string factionName;
+                    string detailText;
+                    bool isPlayerFaction = false;
+
+                    if (ideology == FactionIdeology.Undecided)
+                    {
+                        // Undecided population
+                        factionName = "Undecided";
+                        detailText = "Population not aligned with any faction";
+                    }
+                    else
+                    {
+                        // Get the faction for this ideology
+                        var faction = TIFactionIdeologyTemplate.GetFactionByIdeology(ideology);
+                        if (faction != null)
+                        {
+                            factionName = faction.displayName;
+                            isPlayerFaction = (faction == playerFaction);
+
+                            // Build detail text
+                            var sb = new StringBuilder();
+                            sb.AppendLine($"{faction.displayName}: {percentStr} of population supports this faction");
+
+                            // Get historical change if available
+                            try
+                            {
+                                if (nation.historyPublicOpinion != null && nation.historyPublicOpinion.Count > 31)
+                                {
+                                    nation.historyPublicOpinion[31].TryGetValue(ideology, out float lastMonth);
+                                    float change = popularity - lastMonth;
+                                    if (Math.Abs(change) > 0.001f)
+                                    {
+                                        string changeDir = change > 0 ? "increased" : "decreased";
+                                        sb.AppendLine($"Change from last month: {changeDir} by {Math.Abs(change) * 100:F1}%");
+                                    }
+                                    else
+                                    {
+                                        sb.AppendLine("No change from last month");
+                                    }
+                                }
+                            }
+                            catch { }
+
+                            detailText = sb.ToString();
+                        }
+                        else
+                        {
+                            factionName = ideology.ToString();
+                            detailText = $"{percentStr} support";
+                        }
+                    }
+
+                    // Mark player's faction
+                    string label = isPlayerFaction ? $"{factionName} (You)" : factionName;
+                    section.AddItem(label, percentStr, detailText);
+                }
+
+                // Add summary info about public opinion mechanics
+                if (!string.IsNullOrEmpty(overallTooltip))
+                {
+                    section.AddItem("About Public Opinion", "How public opinion works", overallTooltip);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error building public opinion section: {ex.Message}");
+                section.AddItem("Error loading public opinion data");
+            }
 
             return section;
         }
@@ -276,6 +429,150 @@ namespace TISpeech.ReviewMode.Readers
             return section;
         }
 
+        private ISection CreateAdjacencySection(TINationState nation)
+        {
+            var section = new DataSection("Neighbors");
+            var faction = GameControl.control?.activePlayer;
+
+            try
+            {
+                // Get all adjacent nations (including friendly crossing only)
+                var adjacentNations = nation.AdjacentNations(IAmAnInvadingArmy: false);
+
+                if (adjacentNations == null || adjacentNations.Count == 0)
+                {
+                    section.AddItem("No neighboring nations (island nation)");
+                    return section;
+                }
+
+                // Sort by name for easier navigation
+                var sortedNeighbors = adjacentNations.OrderBy(n => n.displayName).ToList();
+
+                foreach (var neighbor in sortedNeighbors)
+                {
+                    string neighborName = neighbor.displayName;
+                    var adjacencyType = nation.NationAdjacency(neighbor);
+
+                    // Build detail string
+                    string adjacencyDesc = GetAdjacencyDescription(adjacencyType);
+                    string controlInfo = GetNationControlSummary(neighbor, faction);
+
+                    string label = neighborName;
+                    string value = adjacencyDesc;
+                    if (!string.IsNullOrEmpty(controlInfo))
+                    {
+                        value += $", {controlInfo}";
+                    }
+
+                    // Detail includes more info about the neighbor
+                    string detail = BuildNeighborDetail(neighbor, adjacencyType, faction);
+
+                    section.AddItem(label, value, detail);
+                }
+
+                // Add summary at end
+                int fullCount = adjacentNations.Count(n => nation.NationAdjacency(n) == TerrestrialAdjacencyType.FullAdjacency);
+                int friendlyOnlyCount = adjacentNations.Count - fullCount;
+
+                string summary = $"{adjacentNations.Count} neighbors total";
+                if (friendlyOnlyCount > 0)
+                {
+                    summary += $" ({fullCount} land borders, {friendlyOnlyCount} sea/friendly only)";
+                }
+                section.AddItem("Total", summary);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error building adjacency section: {ex.Message}");
+                section.AddItem("Error loading adjacency data");
+            }
+
+            return section;
+        }
+
+        private string GetAdjacencyDescription(TerrestrialAdjacencyType adjacencyType)
+        {
+            switch (adjacencyType)
+            {
+                case TerrestrialAdjacencyType.FullAdjacency:
+                    return "land border";
+                case TerrestrialAdjacencyType.FriendlyCrossingOnly:
+                    return "sea/friendly crossing";
+                default:
+                    return "adjacent";
+            }
+        }
+
+        private string GetNationControlSummary(TINationState nation, TIFactionState viewerFaction)
+        {
+            if (nation.controlPoints == null || nation.controlPoints.Count == 0)
+                return "uncontrolled";
+
+            // Check if viewer has any CPs
+            int viewerCPs = viewerFaction != null
+                ? nation.controlPoints.Count(cp => cp.faction == viewerFaction)
+                : 0;
+
+            if (viewerCPs > 0)
+            {
+                return $"you have {viewerCPs}/{nation.numControlPoints} CPs";
+            }
+
+            // Find top controller
+            var topFaction = nation.controlPoints
+                .Where(cp => cp.faction != null)
+                .GroupBy(cp => cp.faction)
+                .OrderByDescending(g => g.Count())
+                .FirstOrDefault();
+
+            if (topFaction == null)
+                return "uncontrolled";
+
+            int topCount = topFaction.Count();
+            if (topCount == nation.numControlPoints)
+                return $"controlled by {topFaction.Key.displayName}";
+            else
+                return $"{topFaction.Key.displayName} has {topCount}/{nation.numControlPoints}";
+        }
+
+        private string BuildNeighborDetail(TINationState neighbor, TerrestrialAdjacencyType adjacencyType, TIFactionState viewerFaction)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Nation: {neighbor.displayName}");
+            sb.AppendLine($"Border type: {GetAdjacencyDescription(adjacencyType)}");
+
+            if (adjacencyType == TerrestrialAdjacencyType.FullAdjacency)
+            {
+                sb.AppendLine("Armies can invade across this border");
+            }
+            else if (adjacencyType == TerrestrialAdjacencyType.FriendlyCrossingOnly)
+            {
+                sb.AppendLine("Armies can only cross if not invading (friendly passage)");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine($"Population: {FormatPopulation(neighbor.population)}");
+            sb.AppendLine($"GDP: ${FormatLargeNumber(neighbor.GDP)}");
+            sb.AppendLine($"Military Tech: {neighbor.militaryTechLevel:F1}");
+
+            if (neighbor.armies != null && neighbor.armies.Count > 0)
+            {
+                sb.AppendLine($"Armies: {neighbor.armies.Count}");
+            }
+
+            if (neighbor.numNuclearWeapons > 0)
+            {
+                sb.AppendLine($"Nuclear Weapons: {neighbor.numNuclearWeapons}");
+            }
+
+            // Control info
+            sb.AppendLine();
+            string controlInfo = GetNationControlSummary(neighbor, viewerFaction);
+            sb.AppendLine($"Control: {controlInfo}");
+
+            return sb.ToString();
+        }
+
         private ISection CreateRegionsSection(TINationState nation)
         {
             var section = new DataSection("Regions");
@@ -283,7 +580,21 @@ namespace TISpeech.ReviewMode.Readers
             foreach (var region in nation.regions.Take(10))
             {
                 string pop = FormatPopulation(region.population);
-                section.AddItem(region.displayName, pop);
+
+                // Get adjacent regions info
+                var adjacentRegions = region.AdjacentRegions(IAmAnInvadingArmy: false);
+                int foreignAdjacent = adjacentRegions?.Count(r => r.nation != nation) ?? 0;
+
+                string value = pop;
+                if (foreignAdjacent > 0)
+                {
+                    value += $", borders {foreignAdjacent} foreign region{(foreignAdjacent > 1 ? "s" : "")}";
+                }
+
+                // Build detail with adjacent region info
+                string detail = BuildRegionDetail(region, nation);
+
+                section.AddItem(region.displayName, value, detail);
             }
 
             if (nation.regions.Count > 10)
@@ -292,6 +603,45 @@ namespace TISpeech.ReviewMode.Readers
             }
 
             return section;
+        }
+
+        private string BuildRegionDetail(TIRegionState region, TINationState nation)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Region: {region.displayName}");
+            sb.AppendLine($"Population: {FormatPopulation(region.population)}");
+
+            if (region == nation.capital)
+            {
+                sb.AppendLine("This is the capital region");
+            }
+
+            // Adjacent regions
+            var adjacentRegions = region.AdjacentRegions(IAmAnInvadingArmy: false);
+            if (adjacentRegions != null && adjacentRegions.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Adjacent regions:");
+
+                // Group by nation
+                var byNation = adjacentRegions
+                    .GroupBy(r => r.nation)
+                    .OrderBy(g => g.Key == nation ? 0 : 1) // Own nation first
+                    .ThenBy(g => g.Key?.displayName ?? "");
+
+                foreach (var group in byNation)
+                {
+                    string nationName = group.Key == nation ? "same nation" : group.Key?.displayName ?? "unknown";
+                    var regionNames = group.Select(r => r.displayName).Take(5);
+                    sb.AppendLine($"  {nationName}: {string.Join(", ", regionNames)}");
+                    if (group.Count() > 5)
+                    {
+                        sb.AppendLine($"    ...and {group.Count() - 5} more");
+                    }
+                }
+            }
+
+            return sb.ToString();
         }
 
         #endregion

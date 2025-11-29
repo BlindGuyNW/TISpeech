@@ -10,13 +10,15 @@ using TISpeech.ReviewMode.Sections;
 namespace TISpeech.ReviewMode.Screens
 {
     /// <summary>
-    /// Nations screen - browse nations where you have control points.
+    /// Nations screen - browse nations where you have control points or all nations.
     /// Each nation can be drilled into for detailed info and priority management.
+    /// Supports view mode toggle (Tab) and letter navigation (A-Z keys).
     /// </summary>
     public class NationScreen : ScreenBase
     {
         private List<TINationState> nations = new List<TINationState>();
         private readonly NationReader nationReader = new NationReader();
+        private ViewMode viewMode = ViewMode.Mine;
 
         // Cached sections
         private int cachedItemIndex = -1;
@@ -34,18 +36,50 @@ namespace TISpeech.ReviewMode.Screens
 
         public override string Name => "Nations";
 
+        /// <summary>
+        /// Nations screen supports toggling between your nations and all nations.
+        /// </summary>
+        public override bool SupportsViewModeToggle => true;
+
+        /// <summary>
+        /// Current view mode - your nations vs all nations.
+        /// </summary>
+        public override ViewMode CurrentViewMode
+        {
+            get => viewMode;
+            set => viewMode = value;
+        }
+
+        /// <summary>
+        /// Nations screen supports letter navigation for quick jumping.
+        /// </summary>
+        public override bool SupportsLetterNavigation => true;
+
+        /// <summary>
+        /// Get the nation display name for letter navigation.
+        /// </summary>
+        public override string GetItemSortName(int index)
+        {
+            if (index < 0 || index >= nations.Count)
+                return "";
+            return nations[index].displayName ?? "";
+        }
+
         public override string Description
         {
             get
             {
                 var faction = GameControl.control?.activePlayer;
-                if (faction != null)
+                if (viewMode == ViewMode.Mine && faction != null)
                 {
-                    int yourNations = NationReader.GetPlayerNations(faction).Count;
+                    int yourNations = nations.Count;
                     int totalCPs = faction.controlPoints?.Count ?? 0;
                     return $"{yourNations} nations with {totalCPs} control points";
                 }
-                return "Manage nations where you have control";
+                else
+                {
+                    return $"All {nations.Count} nations in the world";
+                }
             }
         }
 
@@ -61,8 +95,20 @@ namespace TISpeech.ReviewMode.Screens
                 if (faction == null)
                     return;
 
-                // Get nations where player has control points
-                nations = NationReader.GetPlayerNations(faction);
+                if (viewMode == ViewMode.Mine)
+                {
+                    // Get nations where player has control points
+                    nations = NationReader.GetPlayerNations(faction);
+                }
+                else
+                {
+                    // Get all nations, sorted alphabetically
+                    nations = NationReader.GetAllNations()
+                        .OrderBy(n => n.displayName)
+                        .ToList();
+                }
+
+                MelonLogger.Msg($"NationScreen refreshed: {nations.Count} nations in {viewMode} mode");
             }
             catch (Exception ex)
             {
@@ -80,7 +126,56 @@ namespace TISpeech.ReviewMode.Screens
             if (index < 0 || index >= nations.Count)
                 return "Invalid item";
 
-            return nationReader.ReadSummary(nations[index]);
+            var nation = nations[index];
+            string summary = nationReader.ReadSummary(nation);
+
+            // In "All" mode, add control status for nations you don't control
+            if (viewMode == ViewMode.All)
+            {
+                var faction = GameControl.control?.activePlayer;
+                if (faction != null)
+                {
+                    int yourCPs = nation.controlPoints?.Count(cp => cp.faction == faction) ?? 0;
+                    if (yourCPs == 0)
+                    {
+                        // Show who has the most control
+                        var topController = GetTopController(nation);
+                        if (!string.IsNullOrEmpty(topController))
+                        {
+                            summary += $", {topController}";
+                        }
+                    }
+                }
+            }
+
+            return summary;
+        }
+
+        /// <summary>
+        /// Get the faction with the most control points in a nation.
+        /// </summary>
+        private string GetTopController(TINationState nation)
+        {
+            if (nation.controlPoints == null || nation.controlPoints.Count == 0)
+                return "uncontrolled";
+
+            var byFaction = nation.controlPoints
+                .Where(cp => cp.faction != null)
+                .GroupBy(cp => cp.faction)
+                .OrderByDescending(g => g.Count())
+                .FirstOrDefault();
+
+            if (byFaction == null)
+                return "uncontrolled";
+
+            int count = byFaction.Count();
+            int total = nation.numControlPoints;
+            string factionName = byFaction.Key.displayName;
+
+            if (count == total)
+                return $"controlled by {factionName}";
+            else
+                return $"{factionName} has {count}/{total}";
         }
 
         public override string ReadItemDetail(int index)
@@ -113,18 +208,32 @@ namespace TISpeech.ReviewMode.Screens
                 var yourCPs = nation.controlPoints?.Where(cp => cp.faction == faction).ToList();
                 if (yourCPs != null && yourCPs.Count > 0)
                 {
-                    cachedSections.Add(CreatePriorityActionsSection(nation, yourCPs, faction));
+                    // Use grid section for priority management
+                    cachedSections.Add(CreatePriorityGridSection(nation, faction));
                 }
             }
 
             return cachedSections;
         }
 
-        #region Priority Management
+        private ISection CreatePriorityGridSection(TINationState nation, TIFactionState faction)
+        {
+            return new PriorityGridSection(
+                nation,
+                faction,
+                (text) => OnSpeak?.Invoke(text, true),
+                OnEnterSelectionMode
+            );
+        }
+
+        #region Priority Management (Legacy - kept for reference)
 
         private ISection CreatePriorityActionsSection(TINationState nation, List<TIControlPoint> yourCPs, TIFactionState faction)
         {
             var section = new DataSection("Priorities");
+
+            // Add investment summary at the top
+            AddInvestmentSummary(section, nation, yourCPs, faction);
 
             // Show each valid priority with current values and progress
             var validPriorities = nation.ValidPriorities;
@@ -132,20 +241,20 @@ namespace TISpeech.ReviewMode.Screens
             foreach (var priority in validPriorities)
             {
                 string displayName = GetPriorityDisplayName(priority);
-                string currentValues = GetPriorityValuesForCPs(priority, yourCPs);
-                string progressInfo = GetPriorityProgressInfo(nation, priority);
+                string yourValues = GetPriorityValuesForCPs(priority, yourCPs);
 
-                string label = $"{displayName}: {currentValues}";
-                if (!string.IsNullOrEmpty(progressInfo))
-                {
-                    label += $" ({progressInfo})";
-                }
+                // Build concise label: "Unity: Your CPs at 0"
+                string cpLabel = yourCPs.Count == 1 ? "Your CP at" : "Your CPs at";
+                string label = $"{displayName}: {cpLabel} {yourValues}";
 
-                // Detail text shows more info
+                // Build concise value showing nation allocation and effect
+                string valueInfo = GetPriorityValueInfo(nation, priority);
+
+                // Full tooltip only on detail read
                 string detail = GetPriorityDetailText(nation, priority, yourCPs);
 
                 // Activating a priority lets you set its value
-                section.AddItem(label, detail,
+                section.AddItem(label, valueInfo, detail,
                     onActivate: () => AdjustPriority(priority, yourCPs, nation, faction));
             }
 
@@ -154,6 +263,70 @@ namespace TISpeech.ReviewMode.Screens
                 onActivate: () => StartPresetSelection(yourCPs, nation, faction));
 
             return section;
+        }
+
+        private void AddInvestmentSummary(DataSection section, TINationState nation, List<TIControlPoint> yourCPs, TIFactionState faction)
+        {
+            try
+            {
+                float nationIP = nation.BaseInvestmentPoints_month();
+                float yourIP = nation.BaseInvestmentPoints_month(faction);
+                int yourCPCount = yourCPs.Count;
+                int totalCPs = nation.numControlPoints;
+
+                string summaryLabel = "Investment Points";
+                string summaryValue = $"Nation: {nationIP:F1} IP/month, You: {yourIP:F1} IP ({yourCPCount}/{totalCPs} CPs)";
+
+                // Get full investment tooltip for detail
+                string investmentTooltip = TISpeechMod.CleanText(NationInfoController.BuildInvestmentTooltip(nation));
+
+                section.AddItem(summaryLabel, summaryValue, investmentTooltip);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Could not build investment summary: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Get concise value info for a priority: nation allocation + brief effect.
+        /// </summary>
+        private string GetPriorityValueInfo(TINationState nation, PriorityType priority)
+        {
+            var sb = new System.Text.StringBuilder();
+
+            try
+            {
+                // Nation allocation percentage
+                float weightPercent = nation.percentWeighttoPriority(priority) * 100f;
+                sb.Append($"Nation allocates {weightPercent:F0}%");
+
+                // For accumulating priorities, show progress
+                if (IsAccumulatingPriority(priority))
+                {
+                    float accumulated = nation.GetAccumulatedInvestmentPoints(priority);
+                    float required = nation.GetRequiredInvestmentPointsForPriority(priority);
+                    if (required > 0)
+                    {
+                        float progressPercent = (accumulated / required) * 100f;
+                        sb.Append($", {progressPercent:F0}% complete");
+                    }
+                }
+
+                // Brief effect summary (cleaned)
+                string effectSummary = TISpeechMod.CleanText(
+                    NationInfoController.PrioritySummaryString(priority, nation, includeIPSymbol: false));
+                if (!string.IsNullOrWhiteSpace(effectSummary))
+                {
+                    sb.Append($". Effect: {effectSummary}");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Could not build priority value info: {ex.Message}");
+            }
+
+            return sb.ToString();
         }
 
         private string GetPriorityValuesForCPs(PriorityType priority, List<TIControlPoint> cps)

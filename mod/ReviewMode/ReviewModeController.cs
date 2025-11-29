@@ -35,6 +35,9 @@ namespace TISpeech.ReviewMode
         // Selection sub-mode (for multi-step actions like mission assignment)
         private SelectionSubMode selectionMode = null;
 
+        // Grid sub-mode (for 2D priority grid navigation)
+        private GridSubMode gridMode = null;
+
         // Debouncing
         private float lastInputTime = 0f;
         private const float INPUT_DEBOUNCE = 0.15f;
@@ -135,10 +138,15 @@ namespace TISpeech.ReviewMode
 
                 bool inputHandled = false;
 
-                // If in selection sub-mode, handle input there
+                // If in selection sub-mode, handle input there first
                 if (selectionMode != null)
                 {
                     inputHandled = HandleSelectionModeInput();
+                }
+                // If in grid sub-mode, handle grid navigation
+                else if (gridMode != null)
+                {
+                    inputHandled = HandleGridModeInput();
                 }
                 else
                 {
@@ -205,6 +213,7 @@ namespace TISpeech.ReviewMode
                 TIInputManager.RestoreKeybindings();
                 isActive = false;
                 selectionMode = null;
+                gridMode = null;
 
                 TISpeechMod.Speak("Review mode off", interrupt: true);
                 MelonLogger.Msg("Review mode deactivated");
@@ -258,8 +267,18 @@ namespace TISpeech.ReviewMode
                 switch (result)
                 {
                     case DrillResult.Drilled:
-                        // Actually drilled into a new level - announce new position
-                        TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                        // Check if we drilled into a PriorityGridSection
+                        var currentSection = navigation.CurrentSection;
+                        if (currentSection is Sections.PriorityGridSection gridSection)
+                        {
+                            // Enter grid mode instead of normal section navigation
+                            EnterGridMode(gridSection);
+                        }
+                        else
+                        {
+                            // Actually drilled into a new level - announce new position
+                            TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                        }
                         break;
                     case DrillResult.Activated:
                         // Item was activated - don't re-announce, the action handles its own speech
@@ -341,7 +360,93 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
+            // Toggle view mode (Tab) - switch between Mine/All modes
+            if (Input.GetKeyDown(KeyCode.Tab))
+            {
+                HandleViewModeToggle();
+                return true;
+            }
+
+            // Letter navigation (A-Z) - jump to item starting with that letter
+            if (navigation.CurrentLevel == NavigationLevel.Items)
+            {
+                char? letter = GetPressedLetter();
+                if (letter.HasValue)
+                {
+                    HandleLetterNavigation(letter.Value);
+                    return true;
+                }
+            }
+
             return false;
+        }
+
+        private void HandleViewModeToggle()
+        {
+            var screen = navigation.CurrentScreen;
+            if (screen == null)
+            {
+                TISpeechMod.Speak("No screen active", interrupt: true);
+                return;
+            }
+
+            if (!screen.SupportsViewModeToggle)
+            {
+                TISpeechMod.Speak("This screen does not support view mode toggle", interrupt: true);
+                return;
+            }
+
+            // If we're not at Items level, go back to Items level first
+            while (navigation.CurrentLevel != NavigationLevel.Screens && navigation.CurrentLevel != NavigationLevel.Items)
+            {
+                navigation.BackOut();
+            }
+
+            if (navigation.CurrentLevel == NavigationLevel.Screens)
+            {
+                // Drill into items first
+                navigation.DrillDown();
+            }
+
+            string announcement = screen.ToggleViewMode();
+            // Reset item index since the list has changed
+            navigation.ResetItemIndex();
+            TISpeechMod.Speak(announcement, interrupt: true);
+        }
+
+        private char? GetPressedLetter()
+        {
+            // Check for letter keys A-Z
+            for (KeyCode key = KeyCode.A; key <= KeyCode.Z; key++)
+            {
+                if (Input.GetKeyDown(key))
+                {
+                    return (char)('A' + (key - KeyCode.A));
+                }
+            }
+            return null;
+        }
+
+        private void HandleLetterNavigation(char letter)
+        {
+            var screen = navigation.CurrentScreen;
+            if (screen == null || !screen.SupportsLetterNavigation)
+            {
+                TISpeechMod.Speak($"Letter navigation not supported", interrupt: true);
+                return;
+            }
+
+            int currentIndex = navigation.CurrentItemIndex;
+            int newIndex = screen.FindNextItemByLetter(letter, currentIndex);
+
+            if (newIndex < 0)
+            {
+                TISpeechMod.Speak($"No items starting with {letter}", interrupt: true);
+                return;
+            }
+
+            navigation.SetItemIndex(newIndex);
+            TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
         }
 
         private bool HandleSelectionModeInput()
@@ -382,6 +487,138 @@ namespace TISpeech.ReviewMode
             }
 
             return false;
+        }
+
+        private bool HandleGridModeInput()
+        {
+            // Navigation: Numpad 8/2 for rows (priorities), 4/6 for columns (CPs)
+            if (Input.GetKeyDown(KeyCode.Keypad8))
+            {
+                if (gridMode.MoveUp())
+                    TISpeechMod.Speak(gridMode.GetCellAnnouncement(), interrupt: true);
+                else
+                    TISpeechMod.Speak($"First priority: {gridMode.Grid.GetRowHeader(0)}", interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2))
+            {
+                if (gridMode.MoveDown())
+                    TISpeechMod.Speak(gridMode.GetCellAnnouncement(), interrupt: true);
+                else
+                    TISpeechMod.Speak($"Last priority: {gridMode.Grid.GetRowHeader(gridMode.RowCount - 1)}", interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad4))
+            {
+                if (gridMode.MoveLeft())
+                    TISpeechMod.Speak(gridMode.GetCellAnnouncement(), interrupt: true);
+                else
+                    TISpeechMod.Speak("First control point", interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad6))
+            {
+                if (gridMode.MoveRight())
+                    TISpeechMod.Speak(gridMode.GetCellAnnouncement(), interrupt: true);
+                else
+                    TISpeechMod.Speak("Last control point", interrupt: true);
+                return true;
+            }
+
+            // Edit cell: Enter to increment, Numpad - to decrement
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5))
+            {
+                if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+                {
+                    // Ctrl+Enter = mass change all your CPs for this priority
+                    gridMode.MassCycleCurrentRow(decrement: false);
+                }
+                else
+                {
+                    gridMode.CycleCurrentCell(decrement: false);
+                }
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.KeypadMinus))
+            {
+                if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+                {
+                    gridMode.MassCycleCurrentRow(decrement: true);
+                }
+                else
+                {
+                    gridMode.CycleCurrentCell(decrement: true);
+                }
+                return true;
+            }
+
+            // Row summary: Numpad *
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply))
+            {
+                TISpeechMod.Speak(gridMode.GetRowSummary(), interrupt: true);
+                return true;
+            }
+
+            // Column summary: Numpad /
+            if (Input.GetKeyDown(KeyCode.KeypadDivide))
+            {
+                TISpeechMod.Speak(gridMode.GetColumnSummary(), interrupt: true);
+                return true;
+            }
+
+            // Sync: S key - copy current CP's priorities to all your other CPs
+            if (Input.GetKeyDown(KeyCode.S))
+            {
+                gridMode.SyncFromCurrentColumn();
+                return true;
+            }
+
+            // Preset: P key - enter preset selection
+            if (Input.GetKeyDown(KeyCode.P))
+            {
+                gridMode.StartPresetSelection();
+                return true;
+            }
+
+            // Description: D key - read full priority description
+            if (Input.GetKeyDown(KeyCode.D))
+            {
+                string description = gridMode.GetPriorityDescription();
+                if (!string.IsNullOrWhiteSpace(description))
+                    TISpeechMod.Speak(description, interrupt: true);
+                else
+                    TISpeechMod.Speak("No description available", interrupt: true);
+                return true;
+            }
+
+            // Exit grid mode: Escape
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                ExitGridMode();
+                return true;
+            }
+
+            return false;
+        }
+
+        #endregion
+
+        #region Grid Sub-Mode
+
+        private void EnterGridMode(Sections.PriorityGridSection grid)
+        {
+            gridMode = new GridSubMode(grid);
+            string announcement = grid.GetEntryAnnouncement();
+            announcement += $" {gridMode.GetCellAnnouncement()}";
+            TISpeechMod.Speak(announcement, interrupt: true);
+        }
+
+        private void ExitGridMode()
+        {
+            gridMode = null;
+            // Back out one level in navigation and announce
+            navigation.BackOut();
+            TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
         }
 
         #endregion
@@ -580,6 +817,120 @@ namespace TISpeech.ReviewMode
             CurrentIndex++;
             if (CurrentIndex >= Options.Count)
                 CurrentIndex = 0;
+        }
+    }
+
+    #endregion
+
+    #region Grid Sub-Mode Types
+
+    /// <summary>
+    /// Sub-mode for 2D grid navigation (priority grid).
+    /// </summary>
+    public class GridSubMode
+    {
+        public Sections.PriorityGridSection Grid { get; }
+        public int CurrentRow { get; private set; }
+        public int CurrentColumn { get; private set; }
+
+        public int RowCount => Grid.RowCount;
+        public int ColumnCount => Grid.ColumnCount;
+
+        public GridSubMode(Sections.PriorityGridSection grid)
+        {
+            Grid = grid;
+            CurrentRow = 0;
+            CurrentColumn = 0;
+        }
+
+        public bool MoveUp()
+        {
+            if (CurrentRow > 0)
+            {
+                CurrentRow--;
+                return true;
+            }
+            return false;
+        }
+
+        public bool MoveDown()
+        {
+            if (CurrentRow < RowCount - 1)
+            {
+                CurrentRow++;
+                return true;
+            }
+            return false;
+        }
+
+        public bool MoveLeft()
+        {
+            if (CurrentColumn > 0)
+            {
+                CurrentColumn--;
+                return true;
+            }
+            return false;
+        }
+
+        public bool MoveRight()
+        {
+            if (CurrentColumn < ColumnCount - 1)
+            {
+                CurrentColumn++;
+                return true;
+            }
+            return false;
+        }
+
+        public string GetCellAnnouncement()
+        {
+            return Grid.ReadCell(CurrentRow, CurrentColumn);
+        }
+
+        public string GetRowSummary()
+        {
+            return Grid.ReadRowSummary(CurrentRow);
+        }
+
+        public string GetColumnSummary()
+        {
+            return Grid.ReadColumnSummary(CurrentColumn);
+        }
+
+        public bool CanEditCurrentCell()
+        {
+            return Grid.CanEditCell(CurrentRow, CurrentColumn);
+        }
+
+        public void CycleCurrentCell(bool decrement = false)
+        {
+            Grid.CycleCell(CurrentRow, CurrentColumn, decrement);
+        }
+
+        public void MassCycleCurrentRow(bool decrement = false)
+        {
+            Grid.MassCycleRow(CurrentRow, decrement);
+        }
+
+        public void SyncFromCurrentColumn()
+        {
+            Grid.SyncFromCP(CurrentColumn);
+        }
+
+        public void ToggleDisplayMode()
+        {
+            Grid.ToggleDisplayMode();
+        }
+
+        public void StartPresetSelection()
+        {
+            Grid.StartPresetSelection();
+        }
+
+        public string GetPriorityDescription()
+        {
+            return Grid.GetPriorityDescription(CurrentRow);
         }
     }
 
