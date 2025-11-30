@@ -14,6 +14,16 @@ namespace TISpeech.ReviewMode.Readers
     /// </summary>
     public class FleetReader : IGameStateReader<TISpaceFleetState>
     {
+        /// <summary>
+        /// Callback for entering transfer planning mode.
+        /// </summary>
+        public Action<TISpaceFleetState> OnEnterTransferMode { get; set; }
+
+        /// <summary>
+        /// Callback for speaking announcements.
+        /// </summary>
+        public Action<string, bool> OnSpeak { get; set; }
+
         public string ReadSummary(TISpaceFleetState fleet)
         {
             if (fleet == null)
@@ -181,6 +191,17 @@ namespace TISpeech.ReviewMode.Readers
 
             // Operations section
             sections.Add(CreateOperationsSection(fleet));
+
+            // Transfer planning section (only for player's own fleets that can transfer)
+            var playerFaction = GameControl.control?.activePlayer;
+            if (playerFaction != null && fleet.faction == playerFaction)
+            {
+                var transferSection = CreateTransferSection(fleet);
+                if (transferSection != null)
+                {
+                    sections.Add(transferSection);
+                }
+            }
 
             return sections;
         }
@@ -357,6 +378,113 @@ namespace TISpeech.ReviewMode.Readers
             }
 
             return section;
+        }
+
+        /// <summary>
+        /// Create the Transfer Planning section for eligible fleets.
+        /// </summary>
+        private ISection CreateTransferSection(TISpaceFleetState fleet)
+        {
+            var section = new DataSection("Transfer");
+
+            // Check transfer eligibility
+            bool canTransfer = CanPlanTransfer(fleet, out string blockedReason);
+
+            if (fleet.inTransfer)
+            {
+                // Show current transfer info
+                var traj = fleet.trajectory;
+                if (traj != null)
+                {
+                    section.AddItem("Status", "Transfer in progress");
+                    section.AddItem("Destination", traj.destination?.displayName ?? "Unknown");
+
+                    if (traj.arrivalTime != null)
+                    {
+                        section.AddItem("Arrival", traj.arrivalTime.ToCustomTimeDateString());
+                    }
+
+                    section.AddItem("Delta-V Used", $"{traj.DV_kps:F1} km/s");
+                }
+                return section;
+            }
+
+            if (!canTransfer)
+            {
+                section.AddItem("Status", blockedReason);
+                return section;
+            }
+
+            // Fleet can transfer - show relevant info and action
+            section.AddItem("Status", "Ready for transfer");
+            section.AddItem("Available Delta-V", $"{fleet.currentDeltaV_kps:F1} km/s");
+            section.AddItem("Cruise Acceleration", $"{fleet.cruiseAcceleration_gs * 1000:F0} milligees");
+
+            // Current orbit info
+            if (fleet.orbitState != null)
+            {
+                section.AddItem("Current Orbit", fleet.orbitState.displayName);
+                section.AddItem("Around", fleet.ref_spaceBody?.displayName ?? "Unknown");
+            }
+
+            // Add the "Plan Transfer" action
+            var fleetCopy = fleet; // Capture for closure
+            section.AddItem("Plan Transfer", "Open transfer planning wizard",
+                onActivate: () => OnEnterTransferMode?.Invoke(fleetCopy));
+
+            return section;
+        }
+
+        /// <summary>
+        /// Check if a fleet can have a transfer planned.
+        /// </summary>
+        private bool CanPlanTransfer(TISpaceFleetState fleet, out string blockedReason)
+        {
+            blockedReason = null;
+
+            if (fleet == null)
+            {
+                blockedReason = "Invalid fleet";
+                return false;
+            }
+
+            if (fleet.inTransfer)
+            {
+                blockedReason = "Already has transfer assigned";
+                return false;
+            }
+
+            if (fleet.dockedOrLanded)
+            {
+                blockedReason = "Must undock first";
+                return false;
+            }
+
+            if (fleet.inCombat || fleet.waitingForCombat)
+            {
+                blockedReason = "In combat";
+                return false;
+            }
+
+            if (fleet.unavailableForOperations)
+            {
+                blockedReason = "Unavailable for operations";
+                return false;
+            }
+
+            if (fleet.currentDeltaV_kps <= 0)
+            {
+                blockedReason = "No delta-V available";
+                return false;
+            }
+
+            if (fleet.cruiseAcceleration_gs <= 0)
+            {
+                blockedReason = "No propulsion available";
+                return false;
+            }
+
+            return true;
         }
 
         #endregion

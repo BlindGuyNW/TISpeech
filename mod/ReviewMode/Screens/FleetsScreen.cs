@@ -155,12 +155,21 @@ namespace TISpeech.ReviewMode.Screens
             if (index == cachedItemIndex && cachedSections.Count > 0)
                 return cachedSections;
 
+            // Wire up callbacks for transfer planning
+            fleetReader.OnEnterTransferMode = OnEnterTransferMode;
+            fleetReader.OnSpeak = OnSpeak;
+
             var fleet = items[index];
             cachedItemIndex = index;
             cachedSections = fleetReader.GetSections(fleet);
 
             return cachedSections;
         }
+
+        /// <summary>
+        /// Callback for entering transfer planning mode.
+        /// </summary>
+        public Action<TISpaceFleetState> OnEnterTransferMode { get; set; }
 
         public override string GetItemSortName(int index)
         {

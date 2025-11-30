@@ -59,6 +59,11 @@ namespace TISpeech.ReviewMode.Screens
         /// </summary>
         public Action<string, bool> OnSpeak { get; set; }
 
+        /// <summary>
+        /// Callback for entering transfer planner from a specific orbit.
+        /// </summary>
+        public Action<TIOrbitState> OnEnterTransferFromOrbit { get; set; }
+
         public override string Name => "Space Bodies";
 
         public override string Description
@@ -190,9 +195,10 @@ namespace TISpeech.ReviewMode.Screens
             if (index == cachedItemIndex && cachedSections.Count > 0)
                 return cachedSections;
 
-            // Wire up callbacks for probe actions
+            // Wire up callbacks for probe actions and transfer planner
             bodyReader.OnEnterSelectionMode = OnEnterSelectionMode;
             bodyReader.OnSpeak = OnSpeak;
+            bodyReader.OnEnterTransferFromOrbit = OnEnterTransferFromOrbit;
 
             var body = items[index];
             cachedItemIndex = index;

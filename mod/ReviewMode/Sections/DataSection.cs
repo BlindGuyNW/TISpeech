@@ -78,6 +78,23 @@ namespace TISpeech.ReviewMode.Sections
         }
 
         /// <summary>
+        /// Add an item that can be drilled into and also has an activate action.
+        /// Press Enter to activate, or drill to see details.
+        /// </summary>
+        public void AddDrillableItem(string label, string secondaryId, string detailText, Action onActivate)
+        {
+            items.Add(new DataItem
+            {
+                Label = label,
+                Value = "",
+                SecondaryId = secondaryId,
+                DetailText = detailText,
+                IsDrillable = true,
+                OnActivate = onActivate
+            });
+        }
+
+        /// <summary>
         /// Clear all items
         /// </summary>
         public void Clear()

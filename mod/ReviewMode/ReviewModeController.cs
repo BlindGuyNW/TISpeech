@@ -53,6 +53,10 @@ namespace TISpeech.ReviewMode
         private PolicySelectionMode policyMode = null;
         public bool IsInPolicyMode => policyMode != null;
 
+        // Transfer planning sub-mode (for fleet transfer planning)
+        private TransferSubMode transferMode = null;
+        public bool IsInTransferMode => transferMode != null;
+
         // Menu mode (for pre-game menu navigation)
         private bool isInMenuMode = false;
         public bool IsInMenuMode => isInMenuMode;
@@ -126,10 +130,12 @@ namespace TISpeech.ReviewMode
             fleetsScreen = new FleetsScreen();
             fleetsScreen.OnEnterSelectionMode = EnterSelectionMode;
             fleetsScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            fleetsScreen.OnEnterTransferMode = EnterTransferMode;
 
             spaceBodiesScreen = new SpaceBodiesScreen();
             spaceBodiesScreen.OnEnterSelectionMode = EnterSelectionMode;
             spaceBodiesScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            spaceBodiesScreen.OnEnterTransferFromOrbit = EnterTransferModeFromOrbit;
 
             habsScreen = new HabsScreen();
             habsScreen.OnEnterSelectionMode = EnterSelectionMode;
@@ -280,7 +286,7 @@ namespace TISpeech.ReviewMode
                 {
                     inputHandled = HandleMenuModeInput();
                 }
-                // Priority order: Policy > Notification > Selection > Grid > Navigation
+                // Priority order: Policy > Notification > Transfer > Selection > Grid > Navigation
                 // Policy mode takes highest priority (handles Set National Policy mission results)
                 else if (policyMode != null)
                 {
@@ -290,6 +296,11 @@ namespace TISpeech.ReviewMode
                 else if (notificationMode != null)
                 {
                     inputHandled = HandleNotificationModeInput();
+                }
+                // If in transfer planning sub-mode, handle transfer input
+                else if (transferMode != null)
+                {
+                    inputHandled = HandleTransferModeInput();
                 }
                 // If in selection sub-mode, handle input there
                 else if (selectionMode != null)
@@ -423,6 +434,7 @@ namespace TISpeech.ReviewMode
                 gridMode = null;
                 notificationMode = null;
                 policyMode = null;
+                transferMode = null;
                 menuContextStack.Clear();
 
                 TISpeechMod.Speak("Review mode off", interrupt: true);
@@ -597,6 +609,13 @@ namespace TISpeech.ReviewMode
             {
                 if (HandleNationFilter())
                     return true;
+            }
+
+            // Transfer planner (T) - enter theoretical transfer planner
+            if (Input.GetKeyDown(KeyCode.T))
+            {
+                EnterTheoreticalTransferMode();
+                return true;
             }
 
             // Letter navigation (A-Z) - jump to item starting with that letter
@@ -1648,6 +1667,233 @@ namespace TISpeech.ReviewMode
         {
             selectionMode = null;
             TISpeechMod.Speak("Cancelled", interrupt: true);
+        }
+
+        #endregion
+
+        #region Transfer Sub-Mode
+
+        /// <summary>
+        /// Enter transfer planning mode for a specific fleet.
+        /// </summary>
+        public void EnterTransferMode(TISpaceFleetState fleet)
+        {
+            if (fleet == null)
+            {
+                TISpeechMod.Speak("No fleet selected", interrupt: true);
+                return;
+            }
+
+            if (fleet.faction != GameControl.control?.activePlayer)
+            {
+                TISpeechMod.Speak("Cannot plan transfers for other factions' fleets", interrupt: true);
+                return;
+            }
+
+            if (fleet.inTransfer)
+            {
+                TISpeechMod.Speak("Fleet already has a transfer assigned", interrupt: true);
+                return;
+            }
+
+            if (fleet.dockedOrLanded)
+            {
+                TISpeechMod.Speak("Fleet must undock before planning a transfer", interrupt: true);
+                return;
+            }
+
+            transferMode = new TransferSubMode(fleet);
+            transferMode.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            transferMode.OnTransferConfirmed = OnTransferConfirmed;
+            transferMode.OnCancelled = ExitTransferMode;
+
+            string announcement = $"Transfer planning for {fleet.displayName}. {fleet.currentDeltaV_kps:F1} km/s available. ";
+            announcement += transferMode.GetStepAnnouncement();
+            TISpeechMod.Speak(announcement, interrupt: true);
+
+            // Announce first option
+            transferMode.AnnounceCurrentItem();
+        }
+
+        /// <summary>
+        /// Enter transfer planning mode for theoretical calculations.
+        /// Starts with acceleration/delta-V selection, then origin, then destination.
+        /// </summary>
+        public void EnterTheoreticalTransferMode()
+        {
+            transferMode = new TransferSubMode();
+            transferMode.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            transferMode.OnCancelled = ExitTransferMode;
+
+            string announcement = "Theoretical transfer planner. ";
+            announcement += transferMode.GetStepAnnouncement();
+            TISpeechMod.Speak(announcement, interrupt: true);
+
+            transferMode.AnnounceCurrentItem();
+        }
+
+        /// <summary>
+        /// Enter transfer planning mode from a specific orbit (context-aware).
+        /// Origin is pre-selected, skips to acceleration/delta-V then destination.
+        /// </summary>
+        public void EnterTransferModeFromOrbit(TIOrbitState origin)
+        {
+            if (origin == null)
+            {
+                TISpeechMod.Speak("No orbit selected", interrupt: true);
+                return;
+            }
+
+            transferMode = new TransferSubMode(origin);
+            transferMode.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            transferMode.OnCancelled = ExitTransferMode;
+
+            string bodyName = origin.barycenter?.displayName ?? "unknown body";
+            string announcement = $"Transfer planner from {origin.displayName} at {bodyName}. ";
+            announcement += transferMode.GetStepAnnouncement();
+            TISpeechMod.Speak(announcement, interrupt: true);
+
+            transferMode.AnnounceCurrentItem();
+        }
+
+        private void ExitTransferMode()
+        {
+            transferMode = null;
+            TISpeechMod.Speak("Transfer planning cancelled", interrupt: true);
+        }
+
+        private void OnTransferConfirmed(Trajectory trajectory)
+        {
+            if (transferMode == null || transferMode.Fleet == null || trajectory == null)
+            {
+                ExitTransferMode();
+                return;
+            }
+
+            try
+            {
+                var fleet = transferMode.Fleet;
+
+                // Assign the transfer
+                fleet.AssignTrajectory(trajectory);
+
+                string dest = trajectory.destination?.displayName ?? "destination";
+                TISpeechMod.Speak($"Transfer assigned. {fleet.displayName} departing for {dest}", interrupt: true);
+
+                MelonLogger.Msg($"Transfer assigned: {fleet.displayName} -> {dest}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error assigning transfer: {ex.Message}");
+                TISpeechMod.Speak("Error assigning transfer", interrupt: true);
+            }
+
+            transferMode = null;
+        }
+
+        private bool HandleTransferModeInput()
+        {
+            if (transferMode == null)
+                return false;
+
+            // Handle numeric input mode (acceleration/delta-V entry)
+            if (transferMode.IsInputStep)
+            {
+                // Digits (number row 0-9)
+                for (int i = 0; i <= 9; i++)
+                {
+                    if (Input.GetKeyDown(KeyCode.Alpha0 + i))
+                    {
+                        transferMode.HandleDigit((char)('0' + i));
+                        return true;
+                    }
+                }
+
+                // Decimal point (period key)
+                if (Input.GetKeyDown(KeyCode.Period))
+                {
+                    transferMode.HandleDecimal();
+                    return true;
+                }
+
+                // Backspace - delete last character (not go back)
+                if (Input.GetKeyDown(KeyCode.Backspace))
+                {
+                    transferMode.HandleBackspace();
+                    return true;
+                }
+
+                // Enter - confirm input and proceed
+                if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                {
+                    transferMode.Select();
+                    return true;
+                }
+
+                // Escape - cancel and go back
+                if (Input.GetKeyDown(KeyCode.Escape))
+                {
+                    transferMode.Back();
+                    return true;
+                }
+
+                return false;
+            }
+
+            // Navigate options (Numpad 8/2, Up/Down arrows)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                transferMode.Previous();
+                transferMode.AnnounceCurrentItem();
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                transferMode.Next();
+                transferMode.AnnounceCurrentItem();
+                return true;
+            }
+
+            // Select/Drill down (Numpad Enter, Numpad 5, Enter, Right arrow)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                transferMode.Select();
+                return true;
+            }
+
+            // Go back (Escape, Backspace, Left arrow)
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Backspace) ||
+                Input.GetKeyDown(KeyCode.LeftArrow))
+            {
+                transferMode.Back();
+                return true;
+            }
+
+            // Read detail (Numpad *, Minus)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                string detail = transferMode.ReadCurrentItemDetail();
+                TISpeechMod.Speak(detail, interrupt: true);
+                return true;
+            }
+
+            // Cycle sort mode (Tab) - only in trajectory view
+            if (Input.GetKeyDown(KeyCode.Tab))
+            {
+                transferMode.CycleSortMode();
+                return true;
+            }
+
+            // Letter navigation (A-Z)
+            char? letter = GetPressedLetter();
+            if (letter.HasValue)
+            {
+                transferMode.JumpToLetter(letter.Value);
+                return true;
+            }
+
+            return false;
         }
 
         #endregion

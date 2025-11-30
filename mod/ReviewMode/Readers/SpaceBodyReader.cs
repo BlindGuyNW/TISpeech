@@ -25,6 +25,11 @@ namespace TISpeech.ReviewMode.Readers
         /// </summary>
         public Action<string, bool> OnSpeak { get; set; }
 
+        /// <summary>
+        /// Callback for entering transfer planner from a specific orbit.
+        /// </summary>
+        public Action<TIOrbitState> OnEnterTransferFromOrbit { get; set; }
+
         public string ReadSummary(TISpaceBodyState body)
         {
             if (body == null)
@@ -147,6 +152,12 @@ namespace TISpeech.ReviewMode.Readers
 
             // Overview section
             sections.Add(CreateOverviewSection(body));
+
+            // Orbits section (browse available orbits around this body)
+            if (body.orbits != null && body.orbits.Count > 0)
+            {
+                sections.Add(CreateOrbitsSection(body));
+            }
 
             // Hab Sites section (includes stations in orbit)
             bool hasHabSites = body.habSites != null && body.habSites.Length > 0;
@@ -327,6 +338,55 @@ namespace TISpeech.ReviewMode.Readers
                 int sites = moon.habSites?.Length ?? 0;
                 string info = sites > 0 ? $"{typeStr}, {sites} site{(sites != 1 ? "s" : "")}" : typeStr;
                 section.AddItem(moon.displayName, info);
+            }
+
+            return section;
+        }
+
+        /// <summary>
+        /// Create the Orbits section showing available orbital positions around the body.
+        /// </summary>
+        private ISection CreateOrbitsSection(TISpaceBodyState body)
+        {
+            var section = new DataSection("Orbits");
+            var orbitReader = new OrbitReader();
+
+            var orbits = OrbitReader.GetOrbitsAroundBody(body);
+            if (orbits == null || orbits.Count == 0)
+            {
+                section.AddItem("Orbits", "None defined");
+                return section;
+            }
+
+            // Summary
+            int interfaceCount = orbits.Count(o => o.interfaceOrbit);
+            int leoCount = orbits.Count(o => o.isEarthLEO);
+            int totalCapacity = orbits.Sum(o => o.stationCapacity);
+            int occupiedSlots = orbits.Sum(o => o.stationsInOrbit?.Count ?? 0);
+
+            section.AddItem("Total Orbits", $"{orbits.Count}");
+            if (interfaceCount > 0)
+            {
+                section.AddItem("Interface Orbits", $"{interfaceCount}");
+            }
+            if (leoCount > 0)
+            {
+                section.AddItem("LEO Orbits", $"{leoCount}");
+            }
+            section.AddItem("Station Slots", $"{occupiedSlots}/{totalCapacity} used");
+
+            // List each orbit - with "Plan transfer from here" action
+            foreach (var orbit in orbits)
+            {
+                var orbitCopy = orbit; // Capture for closure
+                string summary = orbitReader.ReadSummary(orbit);
+                string detail = orbitReader.ReadDetail(orbit) + "\n\nPress Enter to plan transfer from this orbit.";
+
+                section.AddDrillableItem(
+                    summary,
+                    $"orbit_{orbit.ID}",
+                    detail,
+                    onActivate: () => OnEnterTransferFromOrbit?.Invoke(orbitCopy));
             }
 
             return section;
