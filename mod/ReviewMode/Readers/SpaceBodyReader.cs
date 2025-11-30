@@ -148,8 +148,11 @@ namespace TISpeech.ReviewMode.Readers
             // Overview section
             sections.Add(CreateOverviewSection(body));
 
-            // Hab Sites section
-            if (body.habSites != null && body.habSites.Length > 0)
+            // Hab Sites section (includes stations in orbit)
+            bool hasHabSites = body.habSites != null && body.habSites.Length > 0;
+            bool hasStations = body.stationsInOrbit != null && body.stationsInOrbit.Count > 0;
+            bool hasBases = body.surfaceBases != null && body.surfaceBases.Count > 0;
+            if (hasHabSites || hasStations || hasBases)
             {
                 sections.Add(CreateHabSitesSection(body));
             }
@@ -234,41 +237,47 @@ namespace TISpeech.ReviewMode.Readers
 
         private ISection CreateHabSitesSection(TISpaceBodyState body)
         {
-            var section = new DataSection("Hab Sites");
+            var section = new DataSection("Habs and Stations");
+            var habReader = new HabReader();
 
-            var occupied = body.occupiedHabSites;
-            var vacant = body.vacantHabSites;
-
-            section.AddItem("Total Sites", body.habSites.Length.ToString());
-            section.AddItem("Occupied", (occupied?.Count ?? 0).ToString());
-            section.AddItem("Vacant", (vacant?.Count ?? 0).ToString());
-
-            // List occupied sites with their bases
-            if (occupied != null)
+            // Surface hab sites (if any - not present on Earth)
+            var habSites = body.habSites;
+            if (habSites != null && habSites.Length > 0)
             {
-                foreach (var site in occupied)
+                var occupied = body.occupiedHabSites;
+                var vacant = body.vacantHabSites;
+
+                section.AddItem("Surface Sites", habSites.Length.ToString());
+                section.AddItem("Occupied", (occupied?.Count ?? 0).ToString());
+                section.AddItem("Vacant", (vacant?.Count ?? 0).ToString());
+
+                // List occupied sites with their bases (drillable)
+                if (occupied != null)
                 {
-                    if (site.hab != null)
+                    foreach (var site in occupied)
                     {
-                        string owner = site.hab.faction?.displayName ?? "Unknown";
-                        section.AddItem(site.hab.displayName, $"({owner})");
+                        if (site.hab != null)
+                        {
+                            string owner = site.hab.faction?.displayName ?? "Unknown";
+                            string label = $"{site.hab.displayName} ({owner})";
+                            string detail = habReader.ReadDetail(site.hab);
+                            section.AddDrillableItem(label, site.hab.ID.ToString(), detail);
+                        }
                     }
                 }
             }
 
-            // Stations in orbit
+            // Stations in orbit (drillable)
             var stations = body.stationsInOrbit;
             if (stations != null && stations.Count > 0)
             {
                 section.AddItem("Stations in Orbit", stations.Count.ToString());
-                foreach (var station in stations.Take(5)) // Limit to first 5
+                foreach (var station in stations)
                 {
                     string owner = station.faction?.displayName ?? "Unknown";
-                    section.AddItem($"  {station.displayName}", $"({owner})");
-                }
-                if (stations.Count > 5)
-                {
-                    section.AddItem($"  ... and {stations.Count - 5} more", "");
+                    string label = $"{station.displayName} ({owner})";
+                    string detail = habReader.ReadDetail(station);
+                    section.AddDrillableItem(label, station.ID.ToString(), detail);
                 }
             }
 

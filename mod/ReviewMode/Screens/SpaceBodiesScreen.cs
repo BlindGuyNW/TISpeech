@@ -201,6 +201,28 @@ namespace TISpeech.ReviewMode.Screens
             return cachedSections;
         }
 
+        /// <summary>
+        /// Get sections for a drilled-into section item (e.g., a hab/station in the Hab Sites section).
+        /// </summary>
+        public override IReadOnlyList<ISection> GetSectionsForSectionItem(string secondaryId)
+        {
+            if (string.IsNullOrEmpty(secondaryId))
+                return new List<ISection>();
+
+            // The secondaryId is a hab ID - get the hab and return its sections
+            if (int.TryParse(secondaryId, out int habId))
+            {
+                var hab = HabReader.GetHabById(habId);
+                if (hab != null)
+                {
+                    var habReader = new HabReader();
+                    return habReader.GetSections(hab);
+                }
+            }
+
+            return base.GetSectionsForSectionItem(secondaryId);
+        }
+
         public override string GetItemSortName(int index)
         {
             if (index < 0 || index >= items.Count)

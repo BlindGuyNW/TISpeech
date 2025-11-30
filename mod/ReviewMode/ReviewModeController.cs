@@ -37,6 +37,7 @@ namespace TISpeech.ReviewMode
         private OrgMarketScreen orgMarketScreen;
         private FleetsScreen fleetsScreen;
         private SpaceBodiesScreen spaceBodiesScreen;
+        private HabsScreen habsScreen;
 
         // Selection sub-mode (for multi-step actions like mission assignment)
         private SelectionSubMode selectionMode = null;
@@ -130,6 +131,10 @@ namespace TISpeech.ReviewMode
             spaceBodiesScreen.OnEnterSelectionMode = EnterSelectionMode;
             spaceBodiesScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
+            habsScreen = new HabsScreen();
+            habsScreen.OnEnterSelectionMode = EnterSelectionMode;
+            habsScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
             // Register in-game screens with navigation
             var screens = new List<ScreenBase>
             {
@@ -138,7 +143,8 @@ namespace TISpeech.ReviewMode
                 nationScreen,
                 orgMarketScreen,
                 fleetsScreen,
-                spaceBodiesScreen
+                spaceBodiesScreen,
+                habsScreen
             };
 
             navigation.RegisterScreens(screens);
