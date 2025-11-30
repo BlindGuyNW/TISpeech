@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
+using PavonisInteractive.TerraInvicta.Actions;
 using PavonisInteractive.TerraInvicta.Systems.GameTime;
 using TISpeech.ReviewMode.Sections;
 
@@ -29,6 +30,11 @@ namespace TISpeech.ReviewMode.Readers
         /// Callback for entering transfer planner from a specific orbit.
         /// </summary>
         public Action<TIOrbitState> OnEnterTransferFromOrbit { get; set; }
+
+        /// <summary>
+        /// Callback to refresh sections after an action.
+        /// </summary>
+        public Action OnRefreshSections { get; set; }
 
         public string ReadSummary(TISpaceBodyState body)
         {
@@ -276,6 +282,9 @@ namespace TISpeech.ReviewMode.Readers
                         }
                     }
                 }
+
+                // Add "Found Base" action if there are vacant sites
+                AddFoundBaseAction(section, body);
             }
 
             // Stations in orbit (drillable)
@@ -293,6 +302,368 @@ namespace TISpeech.ReviewMode.Readers
             }
 
             return section;
+        }
+
+        /// <summary>
+        /// Add a "Found Base" action to the hab sites section if eligible.
+        /// </summary>
+        private void AddFoundBaseAction(DataSection section, TISpaceBodyState body)
+        {
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null || faction.IsAlienFaction)
+                return;
+
+            try
+            {
+                // Check if body is prospected
+                bool prospected = faction.Prospected(body);
+                if (!prospected)
+                {
+                    bool probeEnRoute = faction.ProspectorEnRoute(body);
+                    if (probeEnRoute)
+                    {
+                        section.AddItem("Found Base", "Awaiting prospecting probe");
+                    }
+                    else
+                    {
+                        section.AddItem("Found Base", "Must prospect body first");
+                    }
+                    return;
+                }
+
+                // Check if we can found bases (have the tech)
+                bool canFoundTier1 = TIEffectsState.CheckForAnyEffectInContext(Context.CanFoundTier1Base, faction);
+
+                if (!canFoundTier1)
+                {
+                    string requiredTech = GetRequiredTechForContext(Context.CanFoundTier1Base);
+                    if (!string.IsNullOrEmpty(requiredTech))
+                    {
+                        section.AddItem("Found Base", $"Requires research: {requiredTech}");
+                    }
+                    else
+                    {
+                        section.AddItem("Found Base", "Requires surface base tech");
+                    }
+                    return;
+                }
+
+                // Check if faction can colonize this location
+                if (!faction.EligibleforColonization(body))
+                {
+                    if (faction.AlienTerritoryToAvoid(body))
+                    {
+                        section.AddItem("Found Base", "Alien territory - cannot colonize");
+                    }
+                    else
+                    {
+                        string reqTech = GetRequiredExplorationTech(body);
+                        if (!string.IsNullOrEmpty(reqTech))
+                        {
+                            section.AddItem("Found Base", $"Requires exploration tech: {reqTech}");
+                        }
+                        else
+                        {
+                            section.AddItem("Found Base", "Cannot colonize this location");
+                        }
+                    }
+                    return;
+                }
+
+                // Check for vacant sites
+                var vacantSites = body.vacantHabSites;
+                if (vacantSites == null || vacantSites.Count == 0)
+                {
+                    section.AddItem("Found Base", "No vacant hab sites");
+                    return;
+                }
+
+                // We're eligible - add the action
+                var bodyCopy = body;
+                section.AddItem("Found Base", $"{vacantSites.Count} site{(vacantSites.Count != 1 ? "s" : "")} available - Press Enter to found",
+                    onActivate: () => StartFoundBase(bodyCopy));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error checking base founding eligibility: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Start the base founding process - select site then councilor.
+        /// </summary>
+        private void StartFoundBase(TISpaceBodyState body)
+        {
+            if (OnEnterSelectionMode == null)
+            {
+                OnSpeak?.Invoke("Cannot found base - selection mode unavailable", true);
+                return;
+            }
+
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                var vacantSites = body.vacantHabSites;
+                if (vacantSites == null || vacantSites.Count == 0)
+                {
+                    OnSpeak?.Invoke("No vacant hab sites available", true);
+                    return;
+                }
+
+                // Build site selection options
+                var options = new List<SelectionOption>();
+
+                foreach (var site in vacantSites)
+                {
+                    string label = site.displayName ?? $"Site {vacantSites.IndexOf(site) + 1}";
+
+                    // Get mining profile info
+                    string miningInfo = "";
+                    if (site.miningProfile != null)
+                    {
+                        var resources = new List<string>();
+                        float water = site.GetHabSiteExpectedProductivity_month(FactionResource.Water);
+                        float volatiles = site.GetHabSiteExpectedProductivity_month(FactionResource.Volatiles);
+                        float metals = site.GetHabSiteExpectedProductivity_month(FactionResource.Metals);
+                        float nobles = site.GetHabSiteExpectedProductivity_month(FactionResource.NobleMetals);
+                        float fissiles = site.GetHabSiteExpectedProductivity_month(FactionResource.Fissiles);
+
+                        if (water > 0.5f) resources.Add($"Water: {water:F1}");
+                        if (volatiles > 0.5f) resources.Add($"Volatiles: {volatiles:F1}");
+                        if (metals > 0.5f) resources.Add($"Metals: {metals:F1}");
+                        if (nobles > 0.1f) resources.Add($"Nobles: {nobles:F1}");
+                        if (fissiles > 0.1f) resources.Add($"Fissiles: {fissiles:F1}");
+
+                        if (resources.Count > 0)
+                        {
+                            miningInfo = string.Join(", ", resources);
+                        }
+                        else
+                        {
+                            miningInfo = "Poor mining";
+                        }
+                    }
+
+                    options.Add(new SelectionOption
+                    {
+                        Label = label,
+                        DetailText = miningInfo,
+                        Data = site
+                    });
+                }
+
+                options.Add(new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Cancel base founding",
+                    Data = null
+                });
+
+                OnEnterSelectionMode($"Select site on {body.displayName}", options, (index) =>
+                {
+                    if (index >= 0 && index < vacantSites.Count)
+                    {
+                        var selectedSite = vacantSites[index];
+                        SelectCouncilorForFoundBase(selectedSite);
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Base founding cancelled", true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error starting base founding: {ex.Message}");
+                OnSpeak?.Invoke("Error preparing base founding", true);
+            }
+        }
+
+        /// <summary>
+        /// Select a councilor to perform the Found Base operation.
+        /// </summary>
+        private void SelectCouncilorForFoundBase(TIHabSiteState site)
+        {
+            if (OnEnterSelectionMode == null)
+                return;
+
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                var foundOp = new FoundOutpostOperation();
+
+                // Get councilors who can perform this operation
+                var eligibleCouncilors = GetCouncilorsForOperation(faction, foundOp, site);
+
+                if (eligibleCouncilors.Count == 0)
+                {
+                    OnSpeak?.Invoke("No councilors available to found base", true);
+                    return;
+                }
+
+                // Get cost info
+                var costs = foundOp.ResourceCostOptions(faction, site, faction, checkCanAfford: false);
+                string costInfo = costs.Count > 0 ? FormatFoundingCost(costs[0]) : "Unknown cost";
+
+                // Build councilor selection options
+                var options = new List<SelectionOption>();
+
+                foreach (var councilor in eligibleCouncilors)
+                {
+                    string status = councilor.OnEarth ? "On Earth" : $"At {councilor.location?.displayName ?? "Unknown"}";
+                    string detail = $"{status}. Cost: {costInfo}";
+
+                    options.Add(new SelectionOption
+                    {
+                        Label = councilor.displayName,
+                        DetailText = detail,
+                        Data = councilor
+                    });
+                }
+
+                options.Add(new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Cancel base founding",
+                    Data = null
+                });
+
+                string siteName = site.displayName ?? "selected site";
+                OnEnterSelectionMode($"Select councilor to found base at {siteName}", options, (index) =>
+                {
+                    if (index >= 0 && index < eligibleCouncilors.Count)
+                    {
+                        var councilor = eligibleCouncilors[index];
+                        ConfirmFoundBase(councilor, site, foundOp, costs);
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Base founding cancelled", true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error selecting councilor for base: {ex.Message}");
+                OnSpeak?.Invoke("Error selecting councilor", true);
+            }
+        }
+
+        /// <summary>
+        /// Confirm and execute base founding.
+        /// </summary>
+        private void ConfirmFoundBase(TICouncilorState councilor, TIHabSiteState site, FoundOutpostOperation foundOp, List<TIResourcesCost> costs)
+        {
+            if (OnEnterSelectionMode == null)
+                return;
+
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                if (costs == null || costs.Count == 0)
+                {
+                    OnSpeak?.Invoke("Cannot determine founding cost", true);
+                    return;
+                }
+
+                // Build cost options
+                var options = new List<SelectionOption>();
+
+                foreach (var cost in costs)
+                {
+                    bool canAfford = cost.CanAfford(faction);
+                    string costStr = FormatFoundingCost(cost);
+                    int days = (int)cost.completionTime_days;
+
+                    string label = canAfford
+                        ? $"Found base - {costStr}, {days} days"
+                        : $"Found base - {costStr}, {days} days (Cannot afford)";
+
+                    options.Add(new SelectionOption
+                    {
+                        Label = label,
+                        DetailText = $"Use {councilor.displayName} to found base at {site.displayName ?? "selected site"}",
+                        Data = new FoundingData { Cost = cost, CanAfford = canAfford }
+                    });
+                }
+
+                options.Add(new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Cancel base founding",
+                    Data = null
+                });
+
+                string siteName = site.displayName ?? "selected site";
+                OnEnterSelectionMode($"Confirm founding base at {siteName}?", options, (index) =>
+                {
+                    if (index >= 0 && index < costs.Count)
+                    {
+                        var data = options[index].Data as FoundingData;
+                        if (data != null && data.CanAfford)
+                        {
+                            ExecuteFoundBase(councilor, site, foundOp, data.Cost);
+                        }
+                        else
+                        {
+                            OnSpeak?.Invoke("Cannot afford this founding option", true);
+                        }
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Base founding cancelled", true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error confirming base founding: {ex.Message}");
+                OnSpeak?.Invoke("Error confirming founding", true);
+            }
+        }
+
+        /// <summary>
+        /// Execute the base founding operation.
+        /// </summary>
+        private void ExecuteFoundBase(TICouncilorState councilor, TIHabSiteState site, FoundOutpostOperation foundOp, TIResourcesCost cost)
+        {
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                // Execute via player action
+                var action = new ConfirmOperationAction(councilor, site, foundOp, cost, null);
+                faction.playerControl.StartAction(action);
+
+                int days = (int)cost.completionTime_days;
+                string siteName = site.displayName ?? "selected site";
+                OnSpeak?.Invoke($"Base founding initiated at {siteName}. Core module arriving in {days} days.", true);
+
+                // Play sound
+                try
+                {
+                    PavonisInteractive.TerraInvicta.Audio.AudioManager.PlayOneShot("event:/SFX/UI_SFX/trig_SFX_ConfirmAlt");
+                }
+                catch { }
+
+                OnRefreshSections?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing base founding: {ex.Message}");
+                OnSpeak?.Invoke("Error founding base", true);
+            }
         }
 
         private ISection CreateMiningSection(TISpaceBodyState body)
@@ -389,7 +760,338 @@ namespace TISpeech.ReviewMode.Readers
                     onActivate: () => OnEnterTransferFromOrbit?.Invoke(orbitCopy));
             }
 
+            // Add "Found Station" action if eligible
+            AddFoundStationAction(section, body);
+
             return section;
+        }
+
+        /// <summary>
+        /// Add a "Found Station" action to the orbits section if eligible.
+        /// </summary>
+        private void AddFoundStationAction(DataSection section, TISpaceBodyState body)
+        {
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null || faction.IsAlienFaction)
+                return;
+
+            try
+            {
+                // Check if we can found stations (have the tech)
+                bool canFoundTier1 = TIEffectsState.CheckForAnyEffectInContext(Context.CanFoundTier1Station, faction);
+
+                if (!canFoundTier1)
+                {
+                    // Find what tech is needed
+                    string requiredTech = GetRequiredTechForContext(Context.CanFoundTier1Station);
+                    if (!string.IsNullOrEmpty(requiredTech))
+                    {
+                        section.AddItem("Found Station", $"Requires research: {requiredTech}");
+                    }
+                    else
+                    {
+                        section.AddItem("Found Station", "Requires orbital station tech");
+                    }
+                    return;
+                }
+
+                // Check if faction can colonize this location
+                if (!faction.EligibleforColonization(body))
+                {
+                    if (faction.AlienTerritoryToAvoid(body))
+                    {
+                        section.AddItem("Found Station", "Alien territory - cannot colonize");
+                    }
+                    else
+                    {
+                        string reqTech = GetRequiredExplorationTech(body);
+                        if (!string.IsNullOrEmpty(reqTech))
+                        {
+                            section.AddItem("Found Station", $"Requires exploration tech: {reqTech}");
+                        }
+                        else
+                        {
+                            section.AddItem("Found Station", "Cannot colonize this location");
+                        }
+                    }
+                    return;
+                }
+
+                // Find orbits with available capacity
+                var orbits = OrbitReader.GetOrbitsAroundBody(body);
+                var availableOrbits = orbits.Where(o => OrbitReader.HasStationCapacity(o)).ToList();
+
+                if (availableOrbits.Count == 0)
+                {
+                    section.AddItem("Found Station", "No available orbital slots");
+                    return;
+                }
+
+                // We're eligible - add the action
+                var bodyCopy = body;
+                section.AddItem("Found Station", $"{availableOrbits.Count} orbit{(availableOrbits.Count != 1 ? "s" : "")} available - Press Enter to found",
+                    onActivate: () => StartFoundStation(bodyCopy));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error checking station founding eligibility: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Start the station founding process - select orbit then councilor.
+        /// </summary>
+        private void StartFoundStation(TISpaceBodyState body)
+        {
+            if (OnEnterSelectionMode == null)
+            {
+                OnSpeak?.Invoke("Cannot found station - selection mode unavailable", true);
+                return;
+            }
+
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                // Get available orbits
+                var orbits = OrbitReader.GetOrbitsAroundBody(body);
+                var availableOrbits = orbits.Where(o => OrbitReader.HasStationCapacity(o)).ToList();
+
+                if (availableOrbits.Count == 0)
+                {
+                    OnSpeak?.Invoke("No available orbital slots", true);
+                    return;
+                }
+
+                // Build orbit selection options
+                var options = new List<SelectionOption>();
+                var orbitReader = new OrbitReader();
+
+                foreach (var orbit in availableOrbits)
+                {
+                    string summary = orbitReader.ReadSummary(orbit);
+                    int current = orbit.stationsInOrbit?.Count ?? 0;
+                    int pending = orbit.pendingHabs;
+                    string capacity = $"{current}/{orbit.stationCapacity} stations";
+                    if (pending > 0)
+                        capacity += $", {pending} under construction";
+
+                    options.Add(new SelectionOption
+                    {
+                        Label = summary,
+                        DetailText = $"{capacity}. Solar power: {orbit.solarMultiplier:P0}",
+                        Data = orbit
+                    });
+                }
+
+                options.Add(new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Cancel station founding",
+                    Data = null
+                });
+
+                OnEnterSelectionMode($"Select orbit around {body.displayName}", options, (index) =>
+                {
+                    if (index >= 0 && index < availableOrbits.Count)
+                    {
+                        var selectedOrbit = availableOrbits[index];
+                        SelectCouncilorForFoundStation(selectedOrbit);
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Station founding cancelled", true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error starting station founding: {ex.Message}");
+                OnSpeak?.Invoke("Error preparing station founding", true);
+            }
+        }
+
+        /// <summary>
+        /// Select a councilor to perform the Found Station operation.
+        /// </summary>
+        private void SelectCouncilorForFoundStation(TIOrbitState orbit)
+        {
+            if (OnEnterSelectionMode == null)
+                return;
+
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                var foundOp = new FoundPlatformOperation();
+
+                // Get councilors who can perform this operation
+                var eligibleCouncilors = GetCouncilorsForOperation(faction, foundOp, orbit);
+
+                if (eligibleCouncilors.Count == 0)
+                {
+                    OnSpeak?.Invoke("No councilors available to found station", true);
+                    return;
+                }
+
+                // Get cost info
+                var costs = foundOp.ResourceCostOptions(faction, orbit, faction, checkCanAfford: false);
+                string costInfo = costs.Count > 0 ? FormatFoundingCost(costs[0]) : "Unknown cost";
+
+                // Build councilor selection options
+                var options = new List<SelectionOption>();
+
+                foreach (var councilor in eligibleCouncilors)
+                {
+                    string status = councilor.OnEarth ? "On Earth" : $"At {councilor.location?.displayName ?? "Unknown"}";
+                    string detail = $"{status}. Cost: {costInfo}";
+
+                    options.Add(new SelectionOption
+                    {
+                        Label = councilor.displayName,
+                        DetailText = detail,
+                        Data = councilor
+                    });
+                }
+
+                options.Add(new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Cancel station founding",
+                    Data = null
+                });
+
+                OnEnterSelectionMode($"Select councilor to found station at {orbit.displayName}", options, (index) =>
+                {
+                    if (index >= 0 && index < eligibleCouncilors.Count)
+                    {
+                        var councilor = eligibleCouncilors[index];
+                        ConfirmFoundStation(councilor, orbit, foundOp, costs);
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Station founding cancelled", true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error selecting councilor for station: {ex.Message}");
+                OnSpeak?.Invoke("Error selecting councilor", true);
+            }
+        }
+
+        /// <summary>
+        /// Confirm and execute station founding.
+        /// </summary>
+        private void ConfirmFoundStation(TICouncilorState councilor, TIOrbitState orbit, FoundPlatformOperation foundOp, List<TIResourcesCost> costs)
+        {
+            if (OnEnterSelectionMode == null)
+                return;
+
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                if (costs == null || costs.Count == 0)
+                {
+                    OnSpeak?.Invoke("Cannot determine founding cost", true);
+                    return;
+                }
+
+                // Build cost options
+                var options = new List<SelectionOption>();
+
+                foreach (var cost in costs)
+                {
+                    bool canAfford = cost.CanAfford(faction);
+                    string costStr = FormatFoundingCost(cost);
+                    int days = (int)cost.completionTime_days;
+
+                    string label = canAfford
+                        ? $"Found station - {costStr}, {days} days"
+                        : $"Found station - {costStr}, {days} days (Cannot afford)";
+
+                    options.Add(new SelectionOption
+                    {
+                        Label = label,
+                        DetailText = $"Use {councilor.displayName} to found station at {orbit.displayName}",
+                        Data = new FoundingData { Cost = cost, CanAfford = canAfford }
+                    });
+                }
+
+                options.Add(new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Cancel station founding",
+                    Data = null
+                });
+
+                OnEnterSelectionMode($"Confirm founding station at {orbit.displayName}?", options, (index) =>
+                {
+                    if (index >= 0 && index < costs.Count)
+                    {
+                        var data = options[index].Data as FoundingData;
+                        if (data != null && data.CanAfford)
+                        {
+                            ExecuteFoundStation(councilor, orbit, foundOp, data.Cost);
+                        }
+                        else
+                        {
+                            OnSpeak?.Invoke("Cannot afford this founding option", true);
+                        }
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Station founding cancelled", true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error confirming station founding: {ex.Message}");
+                OnSpeak?.Invoke("Error confirming founding", true);
+            }
+        }
+
+        /// <summary>
+        /// Execute the station founding operation.
+        /// </summary>
+        private void ExecuteFoundStation(TICouncilorState councilor, TIOrbitState orbit, FoundPlatformOperation foundOp, TIResourcesCost cost)
+        {
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                // Execute via player action
+                var action = new ConfirmOperationAction(councilor, orbit, foundOp, cost, null);
+                faction.playerControl.StartAction(action);
+
+                int days = (int)cost.completionTime_days;
+                OnSpeak?.Invoke($"Station founding initiated at {orbit.displayName}. Core module arriving in {days} days.", true);
+
+                // Play sound
+                try
+                {
+                    PavonisInteractive.TerraInvicta.Audio.AudioManager.PlayOneShot("event:/SFX/UI_SFX/trig_SFX_ConfirmAlt");
+                }
+                catch { }
+
+                OnRefreshSections?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing station founding: {ex.Message}");
+                OnSpeak?.Invoke("Error founding station", true);
+            }
         }
 
         private ISection CreateFleetsSection(TISpaceBodyState body)
@@ -668,6 +1370,7 @@ namespace TISpeech.ReviewMode.Readers
 
         /// <summary>
         /// Format probe cost for display.
+        /// Uses game's own formatting style - raw numbers with K/M/B suffixes only for large values.
         /// </summary>
         private string FormatProbeCost(TIResourcesCost cost)
         {
@@ -677,31 +1380,31 @@ namespace TISpeech.ReviewMode.Readers
             float boost = cost.GetSingleCostValue(FactionResource.Boost);
             if (boost > 0)
             {
-                parts.Add($"{boost:F1} Boost");
+                parts.Add($"{FormatResourceValue(boost)} Boost");
             }
 
             // Check for money
             float money = cost.GetSingleCostValue(FactionResource.Money);
             if (money > 0)
             {
-                parts.Add($"${money:F0}M");
+                parts.Add($"{FormatResourceValue(money)} Money");
             }
 
             // Check for space resources
             float metals = cost.GetSingleCostValue(FactionResource.Metals);
-            if (metals > 0) parts.Add($"{metals:F1} Metals");
+            if (metals > 0) parts.Add($"{FormatResourceValue(metals)} Metals");
 
             float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
-            if (volatiles > 0) parts.Add($"{volatiles:F1} Volatiles");
+            if (volatiles > 0) parts.Add($"{FormatResourceValue(volatiles)} Volatiles");
 
             float water = cost.GetSingleCostValue(FactionResource.Water);
-            if (water > 0) parts.Add($"{water:F1} Water");
+            if (water > 0) parts.Add($"{FormatResourceValue(water)} Water");
 
             float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
-            if (nobles > 0) parts.Add($"{nobles:F1} Nobles");
+            if (nobles > 0) parts.Add($"{FormatResourceValue(nobles)} Nobles");
 
             float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
-            if (fissiles > 0) parts.Add($"{fissiles:F1} Fissiles");
+            if (fissiles > 0) parts.Add($"{FormatResourceValue(fissiles)} Fissiles");
 
             if (parts.Count == 0)
                 return "Free";
@@ -857,6 +1560,153 @@ namespace TISpeech.ReviewMode.Readers
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Get councilors who can perform a founding operation.
+        /// For founding operations, any active councilor can do it - no special requirements.
+        /// </summary>
+        private List<TICouncilorState> GetCouncilorsForOperation(TIFactionState faction, IOperation operation, TIGameState target)
+        {
+            var result = new List<TICouncilorState>();
+
+            try
+            {
+                foreach (var councilor in faction.activeCouncilors)
+                {
+                    // Check if councilor is active and can perform the operation
+                    if (councilor == null || !councilor.active)
+                        continue;
+
+                    // For founding operations, the actor check is on the faction level
+                    // Any active councilor should be able to initiate the operation
+                    // The operation's ActorCanPerformOperation checks faction-level requirements
+                    if (operation.ActorCanPerformOperation(councilor, target))
+                    {
+                        result.Add(councilor);
+                    }
+                }
+
+                // If the operation check didn't work, fall back to all active councilors
+                // (founding operations may be more permissive)
+                if (result.Count == 0)
+                {
+                    result.AddRange(faction.activeCouncilors.Where(c => c != null && c.active));
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error getting councilors for operation: {ex.Message}");
+                // Fall back to all active councilors
+                result.AddRange(faction.activeCouncilors.Where(c => c != null && c.active));
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Format founding cost for display.
+        /// Uses game's own formatting style - raw numbers with K/M/B suffixes only for large values.
+        /// </summary>
+        private string FormatFoundingCost(TIResourcesCost cost)
+        {
+            var parts = new List<string>();
+
+            // Check for boost (Earth launch)
+            float boost = cost.GetSingleCostValue(FactionResource.Boost);
+            if (boost > 0)
+            {
+                parts.Add($"{FormatResourceValue(boost)} Boost");
+            }
+
+            // Check for money
+            float money = cost.GetSingleCostValue(FactionResource.Money);
+            if (money > 0)
+            {
+                parts.Add($"{FormatResourceValue(money)} Money");
+            }
+
+            // Check for space resources
+            float metals = cost.GetSingleCostValue(FactionResource.Metals);
+            if (metals > 0) parts.Add($"{FormatResourceValue(metals)} Metals");
+
+            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
+            if (volatiles > 0) parts.Add($"{FormatResourceValue(volatiles)} Volatiles");
+
+            float water = cost.GetSingleCostValue(FactionResource.Water);
+            if (water > 0) parts.Add($"{FormatResourceValue(water)} Water");
+
+            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
+            if (nobles > 0) parts.Add($"{FormatResourceValue(nobles)} Nobles");
+
+            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
+            if (fissiles > 0) parts.Add($"{FormatResourceValue(fissiles)} Fissiles");
+
+            if (parts.Count == 0)
+                return "Free";
+
+            return string.Join(", ", parts);
+        }
+
+        /// <summary>
+        /// Format a resource value similar to the game's FormatBigOrSmallNumber.
+        /// </summary>
+        private string FormatResourceValue(float value)
+        {
+            if (Math.Abs(value) >= 1000000000)
+                return $"{value / 1000000000:F1}B";
+            if (Math.Abs(value) >= 1000000)
+                return $"{value / 1000000:F1}M";
+            if (Math.Abs(value) >= 1000)
+                return $"{value / 1000:F1}K";
+            if (Math.Abs(value) >= 10)
+                return $"{value:F0}";
+            if (Math.Abs(value) >= 1)
+                return $"{value:F1}";
+            return $"{value:F2}";
+        }
+
+        /// <summary>
+        /// Get the name of the tech required for a context (e.g., CanFoundTier1Station).
+        /// </summary>
+        private string GetRequiredTechForContext(Context context)
+        {
+            try
+            {
+                // Find projects that provide this context effect
+                var project = TemplateManager.IterateByClass<TIProjectTemplate>()
+                    .FirstOrDefault(p => p.effects != null && p.effects.Any(e =>
+                    {
+                        var effect = TemplateManager.Find<TIEffectTemplate>(e);
+                        return effect?.contexts != null && effect.contexts.Contains(context);
+                    }));
+
+                if (project != null)
+                    return project.displayName;
+
+                // Also check techs
+                var tech = TemplateManager.IterateByClass<TITechTemplate>()
+                    .FirstOrDefault(t => t.effects != null && t.effects.Any(e =>
+                    {
+                        var effect = TemplateManager.Find<TIEffectTemplate>(e);
+                        return effect?.contexts != null && effect.contexts.Contains(context);
+                    }));
+
+                return tech?.displayName;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Data class for founding operation selection.
+        /// </summary>
+        private class FoundingData
+        {
+            public TIResourcesCost Cost { get; set; }
+            public bool CanAfford { get; set; }
         }
 
         #endregion

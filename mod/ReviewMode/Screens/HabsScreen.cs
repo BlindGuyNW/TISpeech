@@ -163,6 +163,17 @@ namespace TISpeech.ReviewMode.Screens
 
             var hab = items[index];
             cachedItemIndex = index;
+
+            // Wire up callbacks for the reader
+            habReader.OnEnterSelectionMode = OnEnterSelectionMode;
+            habReader.OnSpeak = OnSpeak;
+            habReader.OnRefreshSections = () =>
+            {
+                // Invalidate cache and re-fetch sections
+                cachedItemIndex = -1;
+                cachedSections.Clear();
+            };
+
             cachedSections = habReader.GetSections(hab);
 
             return cachedSections;
