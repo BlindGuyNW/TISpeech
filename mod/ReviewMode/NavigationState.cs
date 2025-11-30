@@ -230,7 +230,9 @@ namespace TISpeech.ReviewMode
             switch (currentLevel)
             {
                 case NavigationLevel.Screens:
-                    if (CurrentScreen != null && CurrentScreen.ItemCount > 0)
+                    // Allow drilling into screens even with 0 items
+                    // User can then toggle view mode (Tab) to see all items
+                    if (CurrentScreen != null)
                     {
                         currentLevel = NavigationLevel.Items;
                         currentItemIndex = 0;

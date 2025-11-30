@@ -35,6 +35,8 @@ namespace TISpeech.ReviewMode
         private TechnologyScreen technologyScreen;
         private NationScreen nationScreen;
         private OrgMarketScreen orgMarketScreen;
+        private FleetsScreen fleetsScreen;
+        private SpaceBodiesScreen spaceBodiesScreen;
 
         // Selection sub-mode (for multi-step actions like mission assignment)
         private SelectionSubMode selectionMode = null;
@@ -120,13 +122,23 @@ namespace TISpeech.ReviewMode
             orgMarketScreen.OnEnterSelectionMode = EnterSelectionMode;
             orgMarketScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
+            fleetsScreen = new FleetsScreen();
+            fleetsScreen.OnEnterSelectionMode = EnterSelectionMode;
+            fleetsScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
+            spaceBodiesScreen = new SpaceBodiesScreen();
+            spaceBodiesScreen.OnEnterSelectionMode = EnterSelectionMode;
+            spaceBodiesScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
             // Register in-game screens with navigation
             var screens = new List<ScreenBase>
             {
                 councilScreen,
                 technologyScreen,
                 nationScreen,
-                orgMarketScreen
+                orgMarketScreen,
+                fleetsScreen,
+                spaceBodiesScreen
             };
 
             navigation.RegisterScreens(screens);
@@ -560,7 +572,7 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Sort (Ctrl+S) - open sort menu on Nations screen
+            // Sort (Ctrl+S) - open sort menu on Nations or Space Bodies screen
             if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.S))
             {
                 if (HandleNationSort())
@@ -807,17 +819,27 @@ namespace TISpeech.ReviewMode
         }
 
         /// <summary>
-        /// Handle sort request - only works on Nations screen
+        /// Handle sort request - works on Nations and Space Bodies screens
         /// </summary>
         private bool HandleNationSort()
         {
-            var screen = navigation.CurrentScreen as Screens.NationScreen;
-            if (screen == null)
-                return false;
+            // Try Nations screen first
+            var nationScreen = navigation.CurrentScreen as Screens.NationScreen;
+            if (nationScreen != null)
+            {
+                nationScreen.StartSortSelection();
+                return true;
+            }
 
-            // Enter selection mode for sort category
-            screen.StartSortSelection();
-            return true;
+            // Try Space Bodies screen
+            var spaceBodiesScreen = navigation.CurrentScreen as Screens.SpaceBodiesScreen;
+            if (spaceBodiesScreen != null)
+            {
+                spaceBodiesScreen.StartSortSelection();
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
