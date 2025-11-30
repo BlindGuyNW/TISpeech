@@ -17,6 +17,10 @@ namespace TISpeech.ReviewMode
         public Button Button { get; set; }
         public string DetailText { get; set; }
         public bool IsNarrativeOption { get; set; }
+        /// <summary>
+        /// If true, this is an informational item (headline/body) that cannot be activated.
+        /// </summary>
+        public bool IsInformational { get; set; }
     }
 
     /// <summary>
@@ -73,8 +77,46 @@ namespace TISpeech.ReviewMode
             }
         }
 
+        /// <summary>
+        /// Add headline and body text as informational (non-activatable) options.
+        /// Called at the start of both build methods to ensure they appear first.
+        /// </summary>
+        private void AddInformationalItems()
+        {
+            // Add headline as first item if present
+            if (!string.IsNullOrEmpty(headline))
+            {
+                Options.Add(new NotificationOption
+                {
+                    Label = headline,
+                    Button = null,
+                    DetailText = "Notification headline",
+                    IsNarrativeOption = false,
+                    IsInformational = true
+                });
+                MelonLogger.Msg($"Added headline: {headline}");
+            }
+
+            // Add body text as second item if present
+            if (!string.IsNullOrEmpty(bodyText))
+            {
+                Options.Add(new NotificationOption
+                {
+                    Label = bodyText,
+                    Button = null,
+                    DetailText = "Notification details",
+                    IsNarrativeOption = false,
+                    IsInformational = true
+                });
+                MelonLogger.Msg($"Added body text ({bodyText.Length} chars)");
+            }
+        }
+
         private void BuildNarrativeEventOptions(NotificationScreenController controller)
         {
+            // Add headline and body text first
+            AddInformationalItems();
+
             // Narrative events have up to 4 option buttons
             for (int i = 0; i < 4; i++)
             {
@@ -114,13 +156,16 @@ namespace TISpeech.ReviewMode
 
         private void BuildStandardAlertOptions(NotificationScreenController controller)
         {
+            // Add headline and body text first
+            AddInformationalItems();
+
             // NOTE: We only check if button GameObjects are active, NOT if buttons are interactable.
             // The game sets buttons to activeSelf=true but interactable=false initially,
             // then enables interactivity via a coroutine delay. Our postfix runs before the
             // coroutine completes, so buttons are visible but not yet interactable.
             // We check interactability at activation time instead.
 
-            // Add custom delegate buttons first (these are special actions like "Repeat Mission")
+            // Add custom delegate buttons (these are special actions like "Repeat Mission")
             if (controller.customDelegateButton != null)
             {
                 for (int i = 0; i < controller.customDelegateButton.Length; i++)
@@ -272,9 +317,23 @@ namespace TISpeech.ReviewMode
             try
             {
                 var option = CurrentOption;
-                if (option?.Button == null)
+                if (option == null)
                 {
                     MelonLogger.Msg("Cannot activate: no option selected");
+                    return;
+                }
+
+                // Informational items (headline/body) just re-read their content
+                if (option.IsInformational)
+                {
+                    MelonLogger.Msg($"Re-reading informational item: {option.Label.Substring(0, Math.Min(50, option.Label.Length))}...");
+                    TISpeechMod.Speak(option.Label, interrupt: true);
+                    return;
+                }
+
+                if (option.Button == null)
+                {
+                    MelonLogger.Msg("Cannot activate: option has no button");
                     return;
                 }
 
@@ -297,29 +356,14 @@ namespace TISpeech.ReviewMode
 
         /// <summary>
         /// Get the announcement text for entering notification mode.
+        /// Now concise since headline and body are navigable items.
         /// </summary>
         public string GetEntryAnnouncement()
         {
             var sb = new StringBuilder();
-            sb.Append("Notification");
-
-            if (!string.IsNullOrEmpty(headline))
-            {
-                sb.Append(": ");
-                sb.Append(headline);
-            }
-
-            if (!string.IsNullOrEmpty(bodyText))
-            {
-                sb.Append(". ");
-                // Truncate body text for initial announcement
-                string truncated = bodyText.Length > 200 ? bodyText.Substring(0, 200) + "..." : bodyText;
-                sb.Append(truncated);
-            }
-
-            sb.Append(". ");
+            sb.Append("Notification. ");
             sb.Append(Options.Count);
-            sb.Append(Options.Count == 1 ? " option" : " options");
+            sb.Append(Options.Count == 1 ? " item" : " items");
 
             if (Options.Count > 0)
             {
@@ -327,7 +371,6 @@ namespace TISpeech.ReviewMode
                 sb.Append(Options.Count);
                 sb.Append(": ");
                 sb.Append(Options[0].Label);
-                sb.Append(". Use up/down to navigate, Enter to select, * for option details.");
             }
 
             return sb.ToString();

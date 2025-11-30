@@ -30,6 +30,15 @@ namespace TISpeech.Patches
             if (!announceOnEnable || !TISpeechMod.IsReady)
                 return;
 
+            // If Review Mode is active, let NotificationSubMode handle announcements
+            // This prevents DialogAnnouncer from interrupting the navigable notification mode
+            var reviewMode = ReviewMode.ReviewModeController.Instance;
+            if (reviewMode != null && reviewMode.IsActive)
+            {
+                MelonLogger.Msg($"DialogAnnouncer skipping '{dialogName}' - Review Mode will handle it");
+                return;
+            }
+
             // Cooldown to prevent rapid-fire announcements
             float currentTime = Time.unscaledTime;
             if (currentTime - lastAnnounceTime < ANNOUNCE_COOLDOWN)
