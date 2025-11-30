@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
+using PavonisInteractive.TerraInvicta.Entities;
 using TISpeech.ReviewMode.Sections;
 
 namespace TISpeech.ReviewMode.Readers
@@ -52,6 +53,12 @@ namespace TISpeech.ReviewMode.Readers
                 if (destination != null)
                 {
                     sb.Append($", in transit to {destination.displayName}");
+                    // Add arrival time
+                    var arrivalTime = fleet.trajectory?.finalArrivalTime;
+                    if (arrivalTime != null)
+                    {
+                        sb.Append($", ETA {arrivalTime.ToCustomTimeDateString()}");
+                    }
                 }
                 else
                 {
@@ -99,6 +106,11 @@ namespace TISpeech.ReviewMode.Readers
             {
                 var destination = fleet.trajectory?.destination;
                 sb.AppendLine($"  In transit to: {destination?.displayName ?? "unknown"}");
+                var arrivalTime = fleet.trajectory?.finalArrivalTime;
+                if (arrivalTime != null)
+                {
+                    sb.AppendLine($"  Arrival: {arrivalTime.ToCustomTimeDateString()}");
+                }
             }
             else
             {
@@ -116,6 +128,14 @@ namespace TISpeech.ReviewMode.Readers
             {
                 sb.AppendLine("  STATUS: Combat pending");
             }
+
+            // Combat value
+            try
+            {
+                float combatValue = fleet.SpaceCombatValue();
+                sb.AppendLine($"Combat Value: {combatValue:N0}");
+            }
+            catch { }
 
             // Ships
             sb.AppendLine();
@@ -136,8 +156,9 @@ namespace TISpeech.ReviewMode.Readers
             sb.AppendLine("Performance:");
             try
             {
-                float deltaV = fleet.currentDeltaV_kps;
-                sb.AppendLine($"  Delta-V: {deltaV:F1} km/s");
+                float currentDV = fleet.currentDeltaV_kps;
+                float maxDV = fleet.maxDeltaV_kps;
+                sb.AppendLine($"  Delta-V: {currentDV:F1} / {maxDV:F1} km/s");
             }
             catch { }
 
@@ -223,6 +244,11 @@ namespace TISpeech.ReviewMode.Readers
             {
                 var destination = fleet.trajectory?.destination;
                 section.AddItem("Location", $"In transit to {destination?.displayName ?? "unknown"}");
+                var arrivalTime = fleet.trajectory?.finalArrivalTime;
+                if (arrivalTime != null)
+                {
+                    section.AddItem("Arrival", arrivalTime.ToCustomTimeDateString());
+                }
             }
             else
             {
@@ -275,10 +301,16 @@ namespace TISpeech.ReviewMode.Readers
                 string className = group.Key;
                 int count = group.Count();
 
-                // Get first ship for details
+                // Get first ship for details and calculate total combat value for this class
                 var sample = group.First();
                 string hullType = sample.hull?.displayName ?? "";
-                string detail = !string.IsNullOrEmpty(hullType) ? $"{hullType}" : "";
+                float classCombatValue = group.Sum(s => s.SpaceCombatValue());
+
+                string detail = $"CV {classCombatValue:N0}";
+                if (!string.IsNullOrEmpty(hullType))
+                {
+                    detail = $"{hullType}, {detail}";
+                }
 
                 section.AddItem($"{count}x {className}", detail);
             }
@@ -297,17 +329,62 @@ namespace TISpeech.ReviewMode.Readers
                 section.AddItem("By Size", string.Join(", ", sizes));
             }
 
+            // Special capabilities based on ship roles
+            var capabilities = GetFleetCapabilities(fleet);
+            if (capabilities.Count > 0)
+            {
+                section.AddItem("Capabilities", string.Join(", ", capabilities));
+            }
+
             return section;
+        }
+
+        /// <summary>
+        /// Get list of special capabilities based on ship roles in the fleet.
+        /// </summary>
+        private List<string> GetFleetCapabilities(TISpaceFleetState fleet)
+        {
+            var capabilities = new List<string>();
+            if (fleet.ships == null) return capabilities;
+
+            // Check for special utility roles
+            if (fleet.ships.Any(s => s.role == ShipRole.CouncilorTransport))
+                capabilities.Add("Councilor transport");
+            if (fleet.ships.Any(s => s.role == ShipRole.TroopCarrier))
+                capabilities.Add("Troop carrier");
+            if (fleet.ships.Any(s => s.role == ShipRole.ArmyCarrier))
+                capabilities.Add("Army carrier");
+            if (fleet.ships.Any(s => s.role == ShipRole.Explorer))
+                capabilities.Add("Explorer");
+            if (fleet.ships.Any(s => s.role == ShipRole.InnerSystemColonyShip))
+                capabilities.Add("Inner system colony");
+            if (fleet.ships.Any(s => s.role == ShipRole.OuterSystemColonyShip))
+                capabilities.Add("Outer system colony");
+            if (fleet.ships.Any(s => s.role == ShipRole.EarthSurveillance))
+                capabilities.Add("Earth surveillance");
+
+            return capabilities;
         }
 
         private ISection CreatePerformanceSection(TISpaceFleetState fleet)
         {
             var section = new DataSection("Performance");
 
+            // Combat value - important for comparing fleet strength
             try
             {
-                float deltaV = fleet.currentDeltaV_kps;
-                section.AddItem("Delta-V", $"{deltaV:F1} km/s");
+                float combatValue = fleet.SpaceCombatValue();
+                string combatTooltip = GetLocString("UI.Fleets.SpaceCombatValueTab.Description");
+                section.AddItem("Combat Value", $"{combatValue:N0}", combatTooltip);
+            }
+            catch { }
+
+            try
+            {
+                float currentDV = fleet.currentDeltaV_kps;
+                float maxDV = fleet.maxDeltaV_kps;
+                string dvTooltip = GetLocString("UI.Fleets.CruiseDeltaVTab.Description");
+                section.AddItem("Delta-V", $"{currentDV:F1} / {maxDV:F1} km/s", dvTooltip);
             }
             catch
             {
@@ -317,25 +394,45 @@ namespace TISpeech.ReviewMode.Readers
             try
             {
                 float cruiseAccel = fleet.cruiseAcceleration_gs * 1000f;
-                section.AddItem("Cruise Accel", $"{cruiseAccel:F1} milligees");
+                string cruiseTooltip = GetLocString("UI.Fleets.CruiseAccelerationTab.Description");
+                section.AddItem("Cruise Accel", $"{cruiseAccel:F1} milligees", cruiseTooltip);
             }
             catch { }
 
             try
             {
                 float maxAccel = fleet.maxAcceleration_gs * 1000f;
-                section.AddItem("Max Accel", $"{maxAccel:F1} milligees");
+                string combatAccelTooltip = GetLocString("UI.Fleets.CombatAccelerationTab.Description");
+                section.AddItem("Combat Accel", $"{maxAccel:F1} milligees", combatAccelTooltip);
             }
             catch { }
 
             try
             {
                 double mass = fleet.mass_kg / 1000.0; // Convert to tons
-                section.AddItem("Mass", $"{mass:N0} tons");
+                string massTooltip = GetLocString("UI.Fleets.MassTab.Description");
+                section.AddItem("Mass", $"{mass:N0} tons", massTooltip);
             }
             catch { }
 
             return section;
+        }
+
+        /// <summary>
+        /// Safely get a localized string and clean it for screen reader output.
+        /// </summary>
+        private string GetLocString(string key)
+        {
+            try
+            {
+                string text = Loc.T(key);
+                return TISpeechMod.CleanText(text);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Could not get localization for {key}: {ex.Message}");
+                return "";
+            }
         }
 
         private ISection CreateOperationsSection(TISpaceFleetState fleet)
@@ -417,7 +514,7 @@ namespace TISpeech.ReviewMode.Readers
 
             // Fleet can transfer - show relevant info and action
             section.AddItem("Status", "Ready for transfer");
-            section.AddItem("Available Delta-V", $"{fleet.currentDeltaV_kps:F1} km/s");
+            section.AddItem("Available Delta-V", $"{fleet.currentDeltaV_kps:F1} / {fleet.maxDeltaV_kps:F1} km/s");
             section.AddItem("Cruise Acceleration", $"{fleet.cruiseAcceleration_gs * 1000:F0} milligees");
 
             // Current orbit info
