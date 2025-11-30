@@ -57,6 +57,10 @@ namespace TISpeech.ReviewMode
         private TransferSubMode transferMode = null;
         public bool IsInTransferMode => transferMode != null;
 
+        // Combat sub-mode (for space combat pre-combat and live combat navigation)
+        private CombatSubMode combatMode = null;
+        public bool IsInCombatMode => combatMode != null;
+
         // Menu mode (for pre-game menu navigation)
         private bool isInMenuMode = false;
         public bool IsInMenuMode => isInMenuMode;
@@ -286,6 +290,11 @@ namespace TISpeech.ReviewMode
                 {
                     inputHandled = HandleMenuModeInput();
                 }
+                // Combat mode takes highest priority when in pre-combat or live combat
+                else if (combatMode != null)
+                {
+                    inputHandled = HandleCombatModeInput();
+                }
                 // Priority order: Policy > Notification > Transfer > Selection > Grid > Navigation
                 // Policy mode takes highest priority (handles Set National Policy mission results)
                 else if (policyMode != null)
@@ -435,6 +444,7 @@ namespace TISpeech.ReviewMode
                 notificationMode = null;
                 policyMode = null;
                 transferMode = null;
+                combatMode = null;
                 menuContextStack.Clear();
 
                 TISpeechMod.Speak("Review mode off", interrupt: true);
@@ -587,6 +597,18 @@ namespace TISpeech.ReviewMode
             if (Input.GetKeyDown(KeyCode.Tab))
             {
                 HandleViewModeToggle();
+                return true;
+            }
+
+            // Faction filter ([ and ]) - cycle through factions in All mode
+            if (Input.GetKeyDown(KeyCode.LeftBracket))
+            {
+                HandleFactionFilter(previous: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.RightBracket))
+            {
+                HandleFactionFilter(previous: false);
                 return true;
             }
 
@@ -848,6 +870,33 @@ namespace TISpeech.ReviewMode
             // Reset item index since the list has changed
             navigation.ResetItemIndex();
             TISpeechMod.Speak(announcement, interrupt: true);
+        }
+
+        /// <summary>
+        /// Handle faction filter cycling.
+        /// </summary>
+        private void HandleFactionFilter(bool previous)
+        {
+            var screen = navigation.CurrentScreen;
+            if (screen == null)
+            {
+                TISpeechMod.Speak("No screen active", interrupt: true);
+                return;
+            }
+
+            if (!screen.SupportsFactionFilter)
+            {
+                TISpeechMod.Speak("This screen does not support faction filtering", interrupt: true);
+                return;
+            }
+
+            string announcement = previous ? screen.PreviousFactionFilter() : screen.NextFactionFilter();
+            if (announcement != null)
+            {
+                // Reset item index since the list has changed
+                navigation.ResetItemIndex();
+                TISpeechMod.Speak(announcement, interrupt: true);
+            }
         }
 
         /// <summary>
@@ -1890,6 +1939,179 @@ namespace TISpeech.ReviewMode
             if (letter.HasValue)
             {
                 transferMode.JumpToLetter(letter.Value);
+                return true;
+            }
+
+            return false;
+        }
+
+        #endregion
+
+        #region Combat Sub-Mode
+
+        /// <summary>
+        /// Check if we should automatically enter combat mode (when pre-combat begins).
+        /// Called by external patch when space combat is initiated.
+        /// </summary>
+        public void CheckForCombatMode()
+        {
+            try
+            {
+                // Don't auto-enter if not in review mode or already in combat mode
+                if (!isActive || combatMode != null)
+                    return;
+
+                // Check if we're in pre-combat
+                if (CombatSubMode.IsInPreCombat())
+                {
+                    EnterCombatMode();
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error checking for combat mode: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Enter combat mode for pre-combat navigation.
+        /// </summary>
+        public void EnterCombatMode()
+        {
+            try
+            {
+                if (combatMode != null)
+                {
+                    // Already in combat mode - just refresh
+                    combatMode.Refresh();
+                    return;
+                }
+
+                combatMode = new CombatSubMode();
+                if (!combatMode.Initialize())
+                {
+                    MelonLogger.Msg("Failed to initialize combat mode - no active combat");
+                    combatMode = null;
+                    return;
+                }
+
+                // Activate review mode if not already active
+                if (!isActive)
+                {
+                    TIInputManager.BlockKeybindings();
+                    isActive = true;
+                    isInMenuMode = false;
+                }
+
+                TISpeechMod.Speak(combatMode.GetEntryAnnouncement(), interrupt: true);
+                MelonLogger.Msg($"Entered combat mode: Phase={combatMode.CurrentPhase}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error entering combat mode: {ex.Message}");
+                combatMode = null;
+            }
+        }
+
+        /// <summary>
+        /// Exit combat mode and return to normal review mode.
+        /// </summary>
+        public void ExitCombatMode()
+        {
+            if (combatMode == null)
+                return;
+
+            combatMode = null;
+            MelonLogger.Msg("Exited combat mode");
+
+            // Announce return to normal navigation
+            TISpeechMod.Speak("Combat mode ended", interrupt: true);
+        }
+
+        private bool HandleCombatModeInput()
+        {
+            if (combatMode == null) return false;
+
+            // Refresh combat state to detect phase changes
+            combatMode.Refresh();
+
+            // Check if combat ended or phase changed
+            if (combatMode.CurrentPhase == PreCombatPhase.None)
+            {
+                ExitCombatMode();
+                return true;
+            }
+
+            // Navigate options (Numpad 8/2, Up/Down arrows)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                combatMode.Previous();
+                TISpeechMod.Speak(combatMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                combatMode.Next();
+                TISpeechMod.Speak(combatMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Adjust value left/right (for bidding slider)
+            if (Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.LeftArrow))
+            {
+                combatMode.AdjustValue(increment: false);
+                TISpeechMod.Speak(combatMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                combatMode.AdjustValue(increment: true);
+                TISpeechMod.Speak(combatMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Activate selected option (Numpad Enter, Numpad 5, Enter)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) || Input.GetKeyDown(KeyCode.Return))
+            {
+                combatMode.Activate();
+                // Refresh after action
+                combatMode.Refresh();
+                return true;
+            }
+
+            // Read detail (Numpad *, Minus)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                TISpeechMod.Speak(combatMode.GetCurrentDetail(), interrupt: true);
+                return true;
+            }
+
+            // List all options (Numpad /, Equals)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
+            {
+                TISpeechMod.Speak(combatMode.ListAllOptions(), interrupt: true);
+                return true;
+            }
+
+            // Fleet summary (F key)
+            if (Input.GetKeyDown(KeyCode.F))
+            {
+                TISpeechMod.Speak(combatMode.GetFleetSummary(), interrupt: true);
+                return true;
+            }
+
+            // Exit combat review mode (Escape) - but don't exit combat itself
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                TISpeechMod.Speak("Press a stance option to proceed with combat, or Cancel Attack if available", interrupt: true);
+                return true;
+            }
+
+            // Block other exit keys
+            if (Input.GetKeyDown(KeyCode.Keypad0) ||
+                ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.R)))
+            {
+                TISpeechMod.Speak("Cannot exit Review Mode during combat. Select an option to proceed.", interrupt: true);
                 return true;
             }
 
