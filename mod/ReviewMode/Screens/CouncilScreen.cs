@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
 using PavonisInteractive.TerraInvicta.Actions;
@@ -14,22 +15,66 @@ namespace TISpeech.ReviewMode.Screens
     /// Council screen - browse councilors and recruitment candidates.
     /// Items include your councilors, a divider, then recruitment candidates.
     /// Both councilors and candidates have navigable sections.
+    /// Supports Tab toggle to view known enemy councilors (intel-gated).
     /// </summary>
     public class CouncilScreen : ScreenBase
     {
+        /// <summary>
+        /// View modes for the Council screen.
+        /// </summary>
+        public enum ViewMode
+        {
+            MyCouncil,       // Own councilors + recruitment candidates
+            EnemyCouncilors  // Known enemy councilors (intel-gated)
+        }
+
         // Item types in the list
-        private enum ItemType { Councilor, RecruitmentDivider, RecruitCandidate }
+        private enum ItemType { Councilor, RecruitmentDivider, RecruitCandidate, EnemyCouncilor, FactionDivider }
         private class CouncilItem
         {
             public ItemType Type;
-            public TICouncilorState Councilor; // For Councilor or RecruitCandidate types
+            public TICouncilorState Councilor; // For Councilor, RecruitCandidate, or EnemyCouncilor types
+            public TIFactionState Faction;     // For faction divider
         }
 
         private List<CouncilItem> items = new List<CouncilItem>();
+        private ViewMode currentMode = ViewMode.MyCouncil;
 
         private readonly CouncilorReader councilorReader = new CouncilorReader();
         private readonly RecruitCandidateReader recruitReader = new RecruitCandidateReader();
         private readonly MissionModifierReader modifierReader = new MissionModifierReader();
+
+        /// <summary>
+        /// Gets or sets the current view mode.
+        /// </summary>
+        public ViewMode CurrentMode
+        {
+            get => currentMode;
+            set
+            {
+                if (currentMode != value)
+                {
+                    currentMode = value;
+                    Refresh();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Toggles between MyCouncil and EnemyCouncilors modes.
+        /// </summary>
+        public void ToggleMode()
+        {
+            CurrentMode = currentMode == ViewMode.MyCouncil ? ViewMode.EnemyCouncilors : ViewMode.MyCouncil;
+        }
+
+        /// <summary>
+        /// Gets a description of the current mode for announcements.
+        /// </summary>
+        public string GetModeDescription()
+        {
+            return currentMode == ViewMode.MyCouncil ? "My Council" : "Known Enemy Councilors";
+        }
 
         // Cached sections
         private int cachedItemIndex = -1;
@@ -45,21 +90,70 @@ namespace TISpeech.ReviewMode.Screens
         /// </summary>
         public Action<string, bool> OnSpeak { get; set; }
 
-        public override string Name => "Council";
+        public override string Name => currentMode == ViewMode.MyCouncil ? "Council" : "Enemy Councilors";
 
         public override string Description
         {
             get
             {
                 var faction = GameControl.control?.activePlayer;
-                if (faction != null)
+                if (faction == null)
+                    return currentMode == ViewMode.MyCouncil
+                        ? "Manage your councilors and recruit new ones"
+                        : "View known enemy councilors";
+
+                if (currentMode == ViewMode.MyCouncil)
                 {
                     int current = faction.councilors?.Count ?? 0;
                     int max = faction.maxCouncilSize;
                     int candidates = faction.availableCouncilors?.Count ?? 0;
-                    return $"{current}/{max} councilors, {candidates} recruitment candidates";
+                    return $"{current}/{max} councilors, {candidates} recruitment candidates. Press Tab to view enemies.";
                 }
-                return "Manage your councilors and recruit new ones";
+                else
+                {
+                    int knownEnemies = CountKnownEnemyCouncilors(faction);
+                    return $"{knownEnemies} known enemy councilors. Press Tab to view your council.";
+                }
+            }
+        }
+
+        private int CountKnownEnemyCouncilors(TIFactionState faction)
+        {
+            int count = 0;
+            try
+            {
+                foreach (var councilor in GameStateManager.IterateByClass<TICouncilorState>())
+                {
+                    if (councilor.faction != faction &&
+                        councilor.status == CouncilorStatus.Active &&
+                        councilor.faction != null &&
+                        faction.HasIntelOnCouncilorLocation(councilor))  // Use location intel (0.10) threshold
+                    {
+                        count++;
+                    }
+                }
+            }
+            catch { }
+            return count;
+        }
+
+        public override bool SupportsViewModeToggle => true;
+
+        public override string ToggleViewMode()
+        {
+            ToggleMode();
+            var faction = GameControl.control?.activePlayer;
+
+            if (currentMode == ViewMode.EnemyCouncilors)
+            {
+                int knownEnemies = CountKnownEnemyCouncilors(faction);
+                return $"Enemy Councilors: {knownEnemies} known. Press Tab to return to your council.";
+            }
+            else
+            {
+                int myCouncilors = faction?.councilors?.Count ?? 0;
+                int candidates = faction?.availableCouncilors?.Count ?? 0;
+                return $"My Council: {myCouncilors} councilors, {candidates} recruitment candidates. Press Tab to view enemies.";
             }
         }
 
@@ -86,31 +180,92 @@ namespace TISpeech.ReviewMode.Screens
                 if (faction == null)
                     return;
 
-                // Add councilors
-                if (faction.councilors != null)
+                if (currentMode == ViewMode.MyCouncil)
                 {
-                    foreach (var councilor in faction.councilors)
-                    {
-                        items.Add(new CouncilItem { Type = ItemType.Councilor, Councilor = councilor });
-                    }
+                    RefreshMyCouncil(faction);
                 }
-
-                // Add recruitment divider and candidates if there are any
-                if (faction.availableCouncilors != null && faction.availableCouncilors.Count > 0)
+                else
                 {
-                    // Add divider
-                    items.Add(new CouncilItem { Type = ItemType.RecruitmentDivider });
-
-                    // Add each candidate as a full item
-                    foreach (var candidate in faction.availableCouncilors)
-                    {
-                        items.Add(new CouncilItem { Type = ItemType.RecruitCandidate, Councilor = candidate });
-                    }
+                    RefreshEnemyCouncilors(faction);
                 }
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error refreshing council screen: {ex.Message}");
+            }
+        }
+
+        private void RefreshMyCouncil(TIFactionState faction)
+        {
+            // Add councilors
+            if (faction.councilors != null)
+            {
+                foreach (var councilor in faction.councilors)
+                {
+                    items.Add(new CouncilItem { Type = ItemType.Councilor, Councilor = councilor });
+                }
+            }
+
+            // Add recruitment divider and candidates if there are any
+            if (faction.availableCouncilors != null && faction.availableCouncilors.Count > 0)
+            {
+                items.Add(new CouncilItem { Type = ItemType.RecruitmentDivider });
+
+                foreach (var candidate in faction.availableCouncilors)
+                {
+                    items.Add(new CouncilItem { Type = ItemType.RecruitCandidate, Councilor = candidate });
+                }
+            }
+        }
+
+        private void RefreshEnemyCouncilors(TIFactionState faction)
+        {
+            // Group enemy councilors by faction
+            // Include councilors at location intel (0.10) or higher - same threshold as Investigate mission
+            var enemiesByFaction = new Dictionary<TIFactionState, List<TICouncilorState>>();
+
+            foreach (var councilor in GameStateManager.IterateByClass<TICouncilorState>())
+            {
+                // Skip own councilors, inactive, factionless
+                if (councilor.faction == null ||
+                    councilor.faction == faction ||
+                    councilor.status != CouncilorStatus.Active)
+                {
+                    continue;
+                }
+
+                // Include if we have location intel (0.10) - same as Investigate Councilor targeting
+                if (!faction.HasIntelOnCouncilorLocation(councilor))
+                {
+                    continue;
+                }
+
+                if (!enemiesByFaction.ContainsKey(councilor.faction))
+                {
+                    enemiesByFaction[councilor.faction] = new List<TICouncilorState>();
+                }
+                enemiesByFaction[councilor.faction].Add(councilor);
+            }
+
+            // Sort factions by name for consistent ordering
+            var sortedFactions = enemiesByFaction.Keys.OrderBy(f => f.displayName).ToList();
+
+            foreach (var enemyFaction in sortedFactions)
+            {
+                // Add faction divider
+                items.Add(new CouncilItem { Type = ItemType.FactionDivider, Faction = enemyFaction });
+
+                // Add councilors for this faction
+                // Sort: known names first (alphabetically), then unknown agents
+                var councilors = enemiesByFaction[enemyFaction]
+                    .OrderBy(c => faction.HasIntelOnCouncilorBasicData(c) ? 0 : 1)
+                    .ThenBy(c => faction.HasIntelOnCouncilorBasicData(c) ? c.displayName : c.location?.displayName ?? "")
+                    .ToList();
+
+                foreach (var councilor in councilors)
+                {
+                    items.Add(new CouncilItem { Type = ItemType.EnemyCouncilor, Councilor = councilor });
+                }
             }
         }
 
@@ -124,20 +279,28 @@ namespace TISpeech.ReviewMode.Screens
             if (index < 0 || index >= items.Count)
                 return "Invalid item";
 
+            var faction = GameControl.control?.activePlayer;
             var item = items[index];
+
             switch (item.Type)
             {
                 case ItemType.Councilor:
                     return councilorReader.ReadSummary(item.Councilor);
 
                 case ItemType.RecruitmentDivider:
-                    var faction = GameControl.control?.activePlayer;
                     int candidateCount = faction?.availableCouncilors?.Count ?? 0;
                     int slots = (faction?.maxCouncilSize ?? 6) - (faction?.councilors?.Count ?? 0);
                     return $"--- Recruitment Pool: {candidateCount} candidates, {slots} slots available ---";
 
                 case ItemType.RecruitCandidate:
                     return "Recruit: " + recruitReader.ReadSummary(item.Councilor);
+
+                case ItemType.FactionDivider:
+                    int factionCouncilorCount = items.Count(i => i.Type == ItemType.EnemyCouncilor && i.Councilor?.faction == item.Faction);
+                    return $"--- {item.Faction?.displayName ?? "Unknown"}: {factionCouncilorCount} known councilors ---";
+
+                case ItemType.EnemyCouncilor:
+                    return councilorReader.ReadSummary(item.Councilor, faction);
 
                 default:
                     return "Unknown";
@@ -149,21 +312,73 @@ namespace TISpeech.ReviewMode.Screens
             if (index < 0 || index >= items.Count)
                 return "Invalid item";
 
+            var faction = GameControl.control?.activePlayer;
             var item = items[index];
+
             switch (item.Type)
             {
                 case ItemType.Councilor:
                     return councilorReader.ReadDetail(item.Councilor);
 
                 case ItemType.RecruitmentDivider:
-                    return recruitReader.GetRecruitmentStatus(GameControl.control?.activePlayer);
+                    return recruitReader.GetRecruitmentStatus(faction);
 
                 case ItemType.RecruitCandidate:
                     return recruitReader.ReadDetail(item.Councilor);
 
+                case ItemType.FactionDivider:
+                    return GetFactionIntelSummary(item.Faction, faction);
+
+                case ItemType.EnemyCouncilor:
+                    return councilorReader.ReadDetail(item.Councilor, faction);
+
                 default:
                     return "Unknown";
             }
+        }
+
+        private string GetFactionIntelSummary(TIFactionState enemyFaction, TIFactionState viewer)
+        {
+            if (enemyFaction == null || viewer == null)
+                return "Unknown faction";
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Faction: {enemyFaction.displayName}");
+
+            // Count councilors by intel level
+            int basicOnly = 0;
+            int detailLevel = 0;
+            int missionLevel = 0;
+            int fullIntel = 0;
+
+            foreach (var councilor in GameStateManager.IterateByClass<TICouncilorState>())
+            {
+                if (councilor.faction != enemyFaction || councilor.status != CouncilorStatus.Active)
+                    continue;
+
+                if (viewer.HasIntelOnCouncilorSecrets(councilor))
+                    fullIntel++;
+                else if (viewer.HasIntelOnCouncilorMission(councilor))
+                    missionLevel++;
+                else if (viewer.HasIntelOnCouncilorDetails(councilor))
+                    detailLevel++;
+                else if (viewer.HasIntelOnCouncilorBasicData(councilor))
+                    basicOnly++;
+            }
+
+            int total = basicOnly + detailLevel + missionLevel + fullIntel;
+            sb.AppendLine($"Known councilors: {total}");
+
+            if (fullIntel > 0)
+                sb.AppendLine($"  Full intel: {fullIntel}");
+            if (missionLevel > 0)
+                sb.AppendLine($"  Mission intel: {missionLevel}");
+            if (detailLevel > 0)
+                sb.AppendLine($"  Detail intel: {detailLevel}");
+            if (basicOnly > 0)
+                sb.AppendLine($"  Basic intel only: {basicOnly}");
+
+            return sb.ToString();
         }
 
         public override IReadOnlyList<ISection> GetSectionsForItem(int index)
@@ -176,8 +391,9 @@ namespace TISpeech.ReviewMode.Screens
                 return cachedSections;
 
             cachedItemIndex = index;
-
+            var faction = GameControl.control?.activePlayer;
             var item = items[index];
+
             switch (item.Type)
             {
                 case ItemType.Councilor:
@@ -185,12 +401,18 @@ namespace TISpeech.ReviewMode.Screens
                     break;
 
                 case ItemType.RecruitmentDivider:
-                    // Divider has no sections - just a marker
+                case ItemType.FactionDivider:
+                    // Dividers have no sections - just markers
                     cachedSections = new List<ISection>();
                     break;
 
                 case ItemType.RecruitCandidate:
                     cachedSections = recruitReader.GetSections(item.Councilor);
+                    break;
+
+                case ItemType.EnemyCouncilor:
+                    // Pass viewer faction for intel-gated sections
+                    cachedSections = councilorReader.GetSections(item.Councilor, faction);
                     break;
 
                 default:
@@ -206,8 +428,9 @@ namespace TISpeech.ReviewMode.Screens
             if (index < 0 || index >= items.Count)
                 return false;
 
-            // Divider can't be drilled into
-            if (items[index].Type == ItemType.RecruitmentDivider)
+            // Dividers can't be drilled into
+            var itemType = items[index].Type;
+            if (itemType == ItemType.RecruitmentDivider || itemType == ItemType.FactionDivider)
                 return false;
 
             return base.CanDrillIntoItem(index);
@@ -303,9 +526,27 @@ namespace TISpeech.ReviewMode.Screens
 
             // Build selection options with modifier breakdown
             var options = new List<SelectionOption>();
+            var faction = GameControl.control?.activePlayer;
             foreach (var target in targets)
             {
-                string label = target.displayName ?? "Unknown target";
+                string label;
+
+                // For councilor targets, use intel-gated display name
+                if (target.isCouncilorState && faction != null)
+                {
+                    var targetCouncilor = target.ref_councilor;
+                    var view = new CouncilorView(targetCouncilor, faction);
+                    label = view.displayNameCurrent;
+                    // If it's just "Unknown", add location context
+                    if (label == Loc.T("UI.CouncilorView.Unknown") || string.IsNullOrEmpty(label))
+                    {
+                        label = $"Unknown Agent at {targetCouncilor.location?.displayName ?? "unknown location"}";
+                    }
+                }
+                else
+                {
+                    label = target.displayName ?? "Unknown target";
+                }
 
                 // Get modifier breakdown
                 var breakdown = modifierReader.GetModifiers(mission, councilor, target, 0f);
@@ -416,6 +657,32 @@ namespace TISpeech.ReviewMode.Screens
             }
         }
 
+        /// <summary>
+        /// Gets intel-gated display name for a target.
+        /// For councilor targets, respects intel level. For other targets, returns displayName.
+        /// </summary>
+        private string GetIntelGatedTargetName(TIGameState target, TIFactionState viewer)
+        {
+            if (target == null)
+                return "Unknown";
+
+            if (target.isCouncilorState && viewer != null)
+            {
+                var targetCouncilor = target.ref_councilor;
+                var view = new CouncilorView(targetCouncilor, viewer);
+                string name = view.displayNameCurrent;
+
+                // If it's "Unknown", add location context
+                if (string.IsNullOrEmpty(name) || name == Loc.T("UI.CouncilorView.Unknown"))
+                {
+                    return $"Unknown Agent at {targetCouncilor.location?.displayName ?? "unknown location"}";
+                }
+                return name;
+            }
+
+            return target.displayName ?? "Unknown";
+        }
+
         private void ExecuteMissionAssignment(TICouncilorState councilor, TIMissionTemplate mission, TIGameState target, float resourcesSpent)
         {
             try
@@ -426,7 +693,11 @@ namespace TISpeech.ReviewMode.Screens
 
                 string announcement = $"Assigned {councilor.displayName} to {mission.displayName}";
                 if (target != null)
-                    announcement += $" targeting {target.displayName}";
+                {
+                    // Use intel-gated display name for councilor targets
+                    string targetName = GetIntelGatedTargetName(target, faction);
+                    announcement += $" targeting {targetName}";
+                }
                 if (resourcesSpent > 0 && mission.cost != null)
                 {
                     float cost = mission.cost.GetCost(resourcesSpent, councilor);
