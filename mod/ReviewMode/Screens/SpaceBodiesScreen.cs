@@ -190,6 +190,10 @@ namespace TISpeech.ReviewMode.Screens
             if (index == cachedItemIndex && cachedSections.Count > 0)
                 return cachedSections;
 
+            // Wire up callbacks for probe actions
+            bodyReader.OnEnterSelectionMode = OnEnterSelectionMode;
+            bodyReader.OnSpeak = OnSpeak;
+
             var body = items[index];
             cachedItemIndex = index;
             cachedSections = bodyReader.GetSections(body);
@@ -509,6 +513,183 @@ namespace TISpeech.ReviewMode.Screens
         {
             string direction = sortDescending ? "descending" : "ascending";
             return $"{GetSortDisplayName(currentSort)}, {direction}";
+        }
+
+        #endregion
+
+        #region Probe All
+
+        /// <summary>
+        /// Start the "Probe All" process - launches probes to all eligible bodies.
+        /// </summary>
+        public void StartProbeAll()
+        {
+            if (OnEnterSelectionMode == null)
+            {
+                OnSpeak?.Invoke("Cannot probe all - selection mode unavailable", true);
+                return;
+            }
+
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null || faction.IsAlienFaction)
+            {
+                OnSpeak?.Invoke("Cannot probe all", true);
+                return;
+            }
+
+            try
+            {
+                var probeAllOp = new LaunchAllProbeOperation();
+                var targets = probeAllOp.GetPossibleTargets(faction);
+
+                if (targets == null || targets.Count == 0)
+                {
+                    OnSpeak?.Invoke("No bodies available to probe", true);
+                    return;
+                }
+
+                // Get total cost
+                var costs = probeAllOp.ResourceCostOptions(faction, null, faction, checkCanAfford: false);
+                if (costs == null || costs.Count == 0)
+                {
+                    OnSpeak?.Invoke("Cannot calculate probe costs", true);
+                    return;
+                }
+
+                var totalCost = costs[0];
+                bool canAfford = totalCost.CanAfford(faction);
+                string costStr = FormatProbeCost(totalCost);
+
+                // Build confirmation options
+                var options = new List<SelectionOption>
+                {
+                    new SelectionOption
+                    {
+                        Label = canAfford ? $"Launch {targets.Count} probes - {costStr}" : $"Launch {targets.Count} probes - {costStr} (Cannot afford)",
+                        DetailText = $"Send probes to all {targets.Count} eligible bodies. Total cost: {costStr}.",
+                        Data = canAfford
+                    },
+                    new SelectionOption
+                    {
+                        Label = "Cancel",
+                        DetailText = "Cancel probe all",
+                        Data = false
+                    }
+                };
+
+                string prompt = $"Launch probes to {targets.Count} bodies?";
+
+                OnEnterSelectionMode(prompt, options, (index) =>
+                {
+                    if (index == 0 && canAfford)
+                    {
+                        ExecuteProbeAll(probeAllOp, targets, totalCost);
+                    }
+                    else if (index == 0 && !canAfford)
+                    {
+                        OnSpeak?.Invoke("Cannot afford to launch all probes", true);
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Probe all cancelled", true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in StartProbeAll: {ex.Message}");
+                OnSpeak?.Invoke("Error preparing probe all", true);
+            }
+        }
+
+        /// <summary>
+        /// Execute probe all operation.
+        /// </summary>
+        private void ExecuteProbeAll(LaunchAllProbeOperation probeAllOp, List<TIGameState> targets, TIResourcesCost totalCost)
+        {
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                // Execute the operation
+                probeAllOp.OnOperationConfirm(faction, targets[0], totalCost, null);
+
+                OnSpeak?.Invoke($"Launched {targets.Count} probes", true);
+
+                // Play launch sound
+                try
+                {
+                    PavonisInteractive.TerraInvicta.Audio.AudioManager.PlayOneShot("event:/SFX/Game_SFX/Guns/trig_SFX_Missile_Launch");
+                }
+                catch { }
+
+                // Refresh the screen to update probe status
+                Refresh();
+                cachedSections.Clear();
+                cachedItemIndex = -1;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing probe all: {ex.Message}");
+                OnSpeak?.Invoke("Error launching probes", true);
+            }
+        }
+
+        /// <summary>
+        /// Get the number of bodies that can be probed.
+        /// </summary>
+        public int GetProbeableBodyCount()
+        {
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null || faction.IsAlienFaction)
+                return 0;
+
+            try
+            {
+                var probeAllOp = new LaunchAllProbeOperation();
+                var targets = probeAllOp.GetPossibleTargets(faction);
+                return targets?.Count ?? 0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// Format probe cost for display.
+        /// </summary>
+        private string FormatProbeCost(TIResourcesCost cost)
+        {
+            var parts = new List<string>();
+
+            float boost = cost.GetSingleCostValue(FactionResource.Boost);
+            if (boost > 0) parts.Add($"{boost:F1} Boost");
+
+            float money = cost.GetSingleCostValue(FactionResource.Money);
+            if (money > 0) parts.Add($"${money:F0}M");
+
+            float metals = cost.GetSingleCostValue(FactionResource.Metals);
+            if (metals > 0) parts.Add($"{metals:F1} Metals");
+
+            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
+            if (volatiles > 0) parts.Add($"{volatiles:F1} Volatiles");
+
+            float water = cost.GetSingleCostValue(FactionResource.Water);
+            if (water > 0) parts.Add($"{water:F1} Water");
+
+            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
+            if (nobles > 0) parts.Add($"{nobles:F1} Nobles");
+
+            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
+            if (fissiles > 0) parts.Add($"{fissiles:F1} Fissiles");
+
+            if (parts.Count == 0)
+                return "Free";
+
+            return string.Join(", ", parts);
         }
 
         #endregion

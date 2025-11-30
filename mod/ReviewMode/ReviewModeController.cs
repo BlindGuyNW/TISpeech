@@ -579,6 +579,13 @@ namespace TISpeech.ReviewMode
                     return true;
             }
 
+            // Probe All (Ctrl+P) - launch probes to all eligible bodies on Space Bodies screen
+            if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.P))
+            {
+                if (HandleProbeAll())
+                    return true;
+            }
+
             // Filter (Ctrl+F) - cycle faction filter on Nations screen
             if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.F))
             {
@@ -854,6 +861,19 @@ namespace TISpeech.ReviewMode
             screen.CycleFactionFilter();
             // Reset item index since the list has changed
             navigation.ResetItemIndex();
+            return true;
+        }
+
+        /// <summary>
+        /// Handle Probe All request - only works on Space Bodies screen
+        /// </summary>
+        private bool HandleProbeAll()
+        {
+            var screen = navigation.CurrentScreen as Screens.SpaceBodiesScreen;
+            if (screen == null)
+                return false;
+
+            screen.StartProbeAll();
             return true;
         }
 

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
+using PavonisInteractive.TerraInvicta.Systems.GameTime;
 using TISpeech.ReviewMode.Sections;
 
 namespace TISpeech.ReviewMode.Readers
@@ -14,6 +15,16 @@ namespace TISpeech.ReviewMode.Readers
     /// </summary>
     public class SpaceBodyReader : IGameStateReader<TISpaceBodyState>
     {
+        /// <summary>
+        /// Callback for entering selection mode (for probe launch confirmation).
+        /// </summary>
+        public Action<string, List<SelectionOption>, Action<int>> OnEnterSelectionMode { get; set; }
+
+        /// <summary>
+        /// Callback for speaking announcements.
+        /// </summary>
+        public Action<string, bool> OnSpeak { get; set; }
+
         public string ReadSummary(TISpaceBodyState body)
         {
             if (body == null)
@@ -162,6 +173,16 @@ namespace TISpeech.ReviewMode.Readers
                 sections.Add(CreateFleetsSection(body));
             }
 
+            // Prospecting section (for bodies with hab sites)
+            if (body.habSites != null && body.habSites.Length > 0)
+            {
+                var prospectingSection = CreateProspectingSection(body);
+                if (prospectingSection != null)
+                {
+                    sections.Add(prospectingSection);
+                }
+            }
+
             return sections;
         }
 
@@ -199,6 +220,13 @@ namespace TISpeech.ReviewMode.Readers
             if (body.naturalSatellites != null && body.naturalSatellites.Count > 0)
             {
                 section.AddItem("Moons", body.naturalSatellites.Count.ToString());
+            }
+
+            // Launch window info (for non-Earth bodies)
+            var launchWindowInfo = GetLaunchWindowInfo(body);
+            if (launchWindowInfo != null)
+            {
+                section.AddItem("Launch Window", launchWindowInfo);
             }
 
             return section;
@@ -316,6 +344,313 @@ namespace TISpeech.ReviewMode.Readers
             return section;
         }
 
+        /// <summary>
+        /// Create the Prospecting section showing probe status and launch action.
+        /// </summary>
+        private ISection CreateProspectingSection(TISpaceBodyState body)
+        {
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null || faction.IsAlienFaction)
+                return null;
+
+            var section = new DataSection("Prospecting");
+
+            try
+            {
+                // Check prospecting status
+                bool isProspected = faction.Prospected(body);
+                bool probeEnRoute = faction.ProspectorEnRoute(body);
+
+                if (isProspected)
+                {
+                    section.AddItem("Status", "Fully prospected");
+                    return section;
+                }
+
+                if (probeEnRoute)
+                {
+                    // Get ETA
+                    var arrival = faction.ProspectorArrival(body);
+                    if (arrival != null)
+                    {
+                        var currentDate = GameTimeManager.Singleton?.currentTime;
+                        int daysRemaining = currentDate != null ? (int)(arrival - currentDate).TotalDays : 0;
+                        section.AddItem("Status", $"Probe en route, {daysRemaining} days remaining");
+                        section.AddItem("Arrival", arrival.ToShortDateString());
+                    }
+                    else
+                    {
+                        section.AddItem("Status", "Probe en route");
+                    }
+
+                    // Check if we can launch an overtaking probe
+                    var overtakeCosts = faction.CanOvertakeProbeWithProbe(body);
+                    if (overtakeCosts != null && overtakeCosts.Count > 0)
+                    {
+                        var bodyCopy = body;
+                        section.AddItem("Launch Faster Probe", "Send a probe that will arrive sooner",
+                            onActivate: () => StartProbeLaunch(bodyCopy, isOvertake: true));
+                    }
+
+                    return section;
+                }
+
+                // Not prospected and no probe en route - can we launch?
+                bool canProspect = faction.CanProspectWithProbe(body, checkIfCanOvertake: false);
+
+                if (canProspect)
+                {
+                    section.AddItem("Status", "Not prospected");
+
+                    // Get cost info for display
+                    var probeOp = new LaunchProbeOperation();
+                    var costs = probeOp.ResourceCostOptions(faction, body, faction, checkCanAfford: false);
+
+                    if (costs.Count > 0)
+                    {
+                        // Show cheapest/fastest option summary
+                        var bestCost = costs[0];
+                        int days = (int)bestCost.completionTime_days;
+                        section.AddItem("Probe Time", $"~{days} days to prospect");
+                    }
+
+                    // Add launch action
+                    var bodyCopy = body;
+                    section.AddItem("Launch Probe", "Send a probe to prospect this body",
+                        onActivate: () => StartProbeLaunch(bodyCopy, isOvertake: false));
+                }
+                else
+                {
+                    // Check why we can't prospect
+                    if (body.habSites == null || body.habSites.Length == 0)
+                    {
+                        section.AddItem("Status", "No hab sites - cannot prospect");
+                    }
+                    else if (!faction.CanExplore(body))
+                    {
+                        // Find what tech is needed
+                        string requiredTech = GetRequiredExplorationTech(body);
+                        if (!string.IsNullOrEmpty(requiredTech))
+                        {
+                            section.AddItem("Status", $"Requires research: {requiredTech}");
+                        }
+                        else
+                        {
+                            section.AddItem("Status", "Cannot explore - need tech");
+                        }
+                    }
+                    else if (faction.FleetSurveyingPlanet(body))
+                    {
+                        section.AddItem("Status", "Fleet survey in progress");
+                    }
+                    else
+                    {
+                        section.AddItem("Status", "Cannot launch probe");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error creating prospecting section: {ex.Message}");
+                section.AddItem("Status", "Error checking probe status");
+            }
+
+            return section;
+        }
+
+        /// <summary>
+        /// Start the probe launch process - shows cost options and confirms.
+        /// </summary>
+        private void StartProbeLaunch(TISpaceBodyState body, bool isOvertake)
+        {
+            if (OnEnterSelectionMode == null)
+            {
+                OnSpeak?.Invoke("Cannot launch probe - selection mode unavailable", true);
+                return;
+            }
+
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                // Get cost options
+                LaunchProbeOperation probeOp;
+                List<TIResourcesCost> costs;
+
+                if (isOvertake)
+                {
+                    costs = faction.CanOvertakeProbeWithProbe(body);
+                    probeOp = new LaunchOverrideProbeOperation();
+                }
+                else
+                {
+                    probeOp = new LaunchProbeOperation();
+                    costs = probeOp.ResourceCostOptions(faction, body, faction, checkCanAfford: false);
+                }
+
+                if (costs == null || costs.Count == 0)
+                {
+                    OnSpeak?.Invoke("No probe launch options available", true);
+                    return;
+                }
+
+                // Build selection options
+                var options = new List<SelectionOption>();
+
+                foreach (var cost in costs)
+                {
+                    bool canAfford = cost.CanAfford(faction);
+                    string costStr = FormatProbeCost(cost);
+                    int days = (int)cost.completionTime_days;
+
+                    string label = canAfford
+                        ? $"{days} days - {costStr}"
+                        : $"{days} days - {costStr} (Cannot afford)";
+
+                    options.Add(new SelectionOption
+                    {
+                        Label = label,
+                        DetailText = $"Launch probe to {body.displayName}. {costStr}. Arrival in {days} days.",
+                        Data = new ProbeLaunchData { Body = body, Cost = cost, CanAfford = canAfford, IsOvertake = isOvertake }
+                    });
+                }
+
+                // Add cancel option
+                options.Add(new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Cancel probe launch",
+                    Data = null
+                });
+
+                string prompt = isOvertake
+                    ? $"Launch faster probe to {body.displayName}?"
+                    : $"Launch probe to {body.displayName}?";
+
+                OnEnterSelectionMode(prompt, options, (index) =>
+                {
+                    if (index >= 0 && index < costs.Count)
+                    {
+                        var selectedData = options[index].Data as ProbeLaunchData;
+                        if (selectedData != null && selectedData.CanAfford)
+                        {
+                            ExecuteProbeLaunch(selectedData.Body, selectedData.Cost, selectedData.IsOvertake);
+                        }
+                        else
+                        {
+                            OnSpeak?.Invoke("Cannot afford this probe launch option", true);
+                        }
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Probe launch cancelled", true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error starting probe launch: {ex.Message}");
+                OnSpeak?.Invoke("Error preparing probe launch", true);
+            }
+        }
+
+        /// <summary>
+        /// Execute the probe launch.
+        /// </summary>
+        private void ExecuteProbeLaunch(TISpaceBodyState body, TIResourcesCost cost, bool isOvertake)
+        {
+            var faction = GameControl.control?.activePlayer;
+            if (faction == null)
+                return;
+
+            try
+            {
+                LaunchProbeOperation probeOp = isOvertake
+                    ? new LaunchOverrideProbeOperation()
+                    : new LaunchProbeOperation();
+
+                bool success = probeOp.OnOperationConfirm(faction, body, cost, null);
+
+                if (success)
+                {
+                    int days = (int)cost.completionTime_days;
+                    OnSpeak?.Invoke($"Probe launched to {body.displayName}. Arrival in {days} days.", true);
+
+                    // Play launch sound
+                    try
+                    {
+                        PavonisInteractive.TerraInvicta.Audio.AudioManager.PlayOneShot("event:/SFX/Game_SFX/Guns/trig_SFX_Missile_Launch");
+                    }
+                    catch { }
+                }
+                else
+                {
+                    OnSpeak?.Invoke("Failed to launch probe", true);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing probe launch: {ex.Message}");
+                OnSpeak?.Invoke("Error launching probe", true);
+            }
+        }
+
+        /// <summary>
+        /// Format probe cost for display.
+        /// </summary>
+        private string FormatProbeCost(TIResourcesCost cost)
+        {
+            var parts = new List<string>();
+
+            // Check for boost (Earth launch)
+            float boost = cost.GetSingleCostValue(FactionResource.Boost);
+            if (boost > 0)
+            {
+                parts.Add($"{boost:F1} Boost");
+            }
+
+            // Check for money
+            float money = cost.GetSingleCostValue(FactionResource.Money);
+            if (money > 0)
+            {
+                parts.Add($"${money:F0}M");
+            }
+
+            // Check for space resources
+            float metals = cost.GetSingleCostValue(FactionResource.Metals);
+            if (metals > 0) parts.Add($"{metals:F1} Metals");
+
+            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
+            if (volatiles > 0) parts.Add($"{volatiles:F1} Volatiles");
+
+            float water = cost.GetSingleCostValue(FactionResource.Water);
+            if (water > 0) parts.Add($"{water:F1} Water");
+
+            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
+            if (nobles > 0) parts.Add($"{nobles:F1} Nobles");
+
+            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
+            if (fissiles > 0) parts.Add($"{fissiles:F1} Fissiles");
+
+            if (parts.Count == 0)
+                return "Free";
+
+            return string.Join(", ", parts);
+        }
+
+        /// <summary>
+        /// Data class for probe launch selection.
+        /// </summary>
+        private class ProbeLaunchData
+        {
+            public TISpaceBodyState Body { get; set; }
+            public TIResourcesCost Cost { get; set; }
+            public bool CanAfford { get; set; }
+            public bool IsOvertake { get; set; }
+        }
+
         #endregion
 
         #region Helpers
@@ -369,6 +704,89 @@ namespace TISpeech.ReviewMode.Readers
             catch
             {
                 section.AddItem(label, "Unknown");
+            }
+        }
+
+        /// <summary>
+        /// Get the name of the tech required to explore a space body.
+        /// </summary>
+        private string GetRequiredExplorationTech(TISpaceBodyState body)
+        {
+            try
+            {
+                // Get the effect needed to explore this body
+                var effectToExplore = body.GetEffectToExplore();
+                if (effectToExplore == null)
+                    return null;
+
+                // Find the tech that provides this effect
+                var requiredTech = TemplateManager.IterateByClass<TITechTemplate>()
+                    .FirstOrDefault(t => t.effects != null && t.effects.Contains(effectToExplore.dataName));
+
+                return requiredTech?.displayName;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Get launch window info for a space body (from Earth).
+        /// </summary>
+        private string GetLaunchWindowInfo(TISpaceBodyState body)
+        {
+            try
+            {
+                // No launch window for Earth or Earth's moons
+                if (body.isEarth || (body.barycenter != null && body.barycenter.isEarth))
+                    return null;
+
+                var faction = GameControl.control?.activePlayer;
+                if (faction == null)
+                    return null;
+
+                // Get the next Hohmann launch window from Earth
+                double synodicPeriod_s;
+                var nextWindow = TINaturalSpaceObjectState.GetNextHohmannLaunchWindowDate(
+                    faction,
+                    GameStateManager.Earth(),
+                    body,
+                    TITimeState.Now(),
+                    out synodicPeriod_s);
+
+                bool penaltyFromPrior;
+                double penaltyFraction = TISpaceObjectState.GetHohmannTimePenaltyFraction(
+                    faction,
+                    nextWindow,
+                    synodicPeriod_s,
+                    out penaltyFromPrior);
+
+                // Format the result
+                if (penaltyFraction < 0.03)
+                {
+                    return "Now (optimal)";
+                }
+
+                int penaltyPercent = (int)(penaltyFraction * 100);
+                string trend = penaltyFromPrior ? "closing" : "opening";
+
+                // Calculate days to next window
+                var currentDate = GameTimeManager.Singleton?.currentTime;
+                if (currentDate != null)
+                {
+                    int daysToWindow = (int)(nextWindow - currentDate).TotalDays;
+                    if (daysToWindow > 0)
+                    {
+                        return $"+{penaltyPercent}% penalty, {trend}, {daysToWindow} days to optimal";
+                    }
+                }
+
+                return $"+{penaltyPercent}% penalty, {trend}";
+            }
+            catch
+            {
+                return null;
             }
         }
 
