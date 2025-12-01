@@ -1489,7 +1489,8 @@ namespace TISpeech.Patches
         #region Notification Review Mode Patches
 
         /// <summary>
-        /// Patch NotificationScreenController.PushNextAlert to enter notification mode when Review Mode is active.
+        /// Patch NotificationScreenController.PushNextAlert to enter notification mode.
+        /// If Review Mode is not active, it will be automatically activated.
         /// This allows keyboard navigation through notification options.
         /// </summary>
         [HarmonyPatch(typeof(NotificationScreenController), "PushNextAlert")]
@@ -1501,14 +1502,22 @@ namespace TISpeech.Patches
                 if (!TISpeechMod.IsReady)
                     return;
 
-                // Only enter notification mode if Review Mode is already active
                 var reviewMode = ReviewMode.ReviewModeController.Instance;
-                if (reviewMode == null || !reviewMode.IsActive)
+                if (reviewMode == null)
                 {
-                    MelonLogger.Msg("Notification appeared but Review Mode is not active - skipping notification mode");
+                    MelonLogger.Msg("Notification appeared but ReviewModeController not initialized");
                     return;
                 }
 
+                // If Review Mode is not active, activate it and go directly to notification mode
+                if (!reviewMode.IsActive)
+                {
+                    MelonLogger.Msg("Notification appeared - auto-activating Review Mode for notification");
+                    reviewMode.ActivateForNotification(__instance);
+                    return;
+                }
+
+                // Review Mode is already active - enter notification sub-mode
                 // Don't enter notification mode if we're already in it (shouldn't happen but be safe)
                 if (reviewMode.IsInNotificationMode)
                 {

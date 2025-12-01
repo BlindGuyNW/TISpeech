@@ -9,7 +9,15 @@
       "Bash(dir \"C:\\git\\TISpeech\\decompiled\" /s /b)",
       "Bash(findstr:*)",
       "Bash(xargs basename:*)",
-      "Bash(dir \"C:\\git\\TISpeech\\mod\\ReviewMode\" /s)"
+      "Bash(dir \"C:\\git\\TISpeech\\mod\\ReviewMode\" /s)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd notification mode and fix research slot state detection\n\n- Add NotificationSubMode for keyboard navigation through notification popups\n- Integrate notification mode with ReviewModeController (enters when notification\n  appears while Review Mode is active)\n- Add time controls to Review Mode (Space for pause/play, 1-6 for speed, Numpad 7\n  for full status including blocking reasons)\n- Fix notification buttons only showing \"Exit\" by removing interactable check\n  during option building (game enables buttons via delayed coroutine)\n- Fix research slots showing stale progress after completion by checking\n  TIPromptQueueState for pending PromptSelectTech/PromptSelectProject prompts\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(dir \"C:\\git\\TISpeech\\decompiled\")",
+      "Bash(dir \"C:\\git\\TISpeech\\decompiled\" /b)",
+      "Bash(dir C:gitTISpeechdecompiled /s /b)",
+      "Bash(xargs:*)",
+      "Bash(/dev/null -exec grep -l \"orderProspecting\\|prospectButton\" {} ;)"
     ],
     "deny": [],
     "ask": []

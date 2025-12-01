@@ -11,6 +11,7 @@ namespace TISpeech.ReviewMode.Screens
     /// <summary>
     /// Fleets screen - browse your space fleets and their ships.
     /// Supports view mode toggle to see known enemy fleets.
+    /// Supports faction filtering when viewing all fleets.
     /// </summary>
     public class FleetsScreen : ScreenBase
     {
@@ -19,6 +20,10 @@ namespace TISpeech.ReviewMode.Screens
 
         // View mode: false = your fleets only, true = all known fleets
         private bool showAllMode = false;
+
+        // Faction filtering (in showAllMode)
+        private List<TIFactionState> knownFactions = new List<TIFactionState>();
+        private int factionFilterIndex = -1; // -1 = show all, 0+ = specific faction
 
         // Cached sections
         private int cachedItemIndex = -1;
@@ -46,6 +51,13 @@ namespace TISpeech.ReviewMode.Screens
                     int myFleets = FleetReader.GetPlayerFleets(faction).Count;
                     if (showAllMode)
                     {
+                        if (factionFilterIndex >= 0 && factionFilterIndex < knownFactions.Count)
+                        {
+                            // Filtered to specific faction
+                            var filteredFaction = knownFactions[factionFilterIndex];
+                            int factionFleets = items.Count;
+                            return $"{filteredFaction.displayName}: {factionFleets} fleet{(factionFleets != 1 ? "s" : "")}";
+                        }
                         int knownEnemy = FleetReader.GetKnownEnemyFleets(faction).Count;
                         return $"All known fleets: {myFleets} yours, {knownEnemy} enemy";
                     }
@@ -77,9 +89,42 @@ namespace TISpeech.ReviewMode.Screens
 
                 if (showAllMode)
                 {
-                    // Add your fleets first, then known enemy fleets
-                    items.AddRange(FleetReader.GetPlayerFleets(faction));
-                    items.AddRange(FleetReader.GetKnownEnemyFleets(faction));
+                    // Get all known enemy fleets
+                    var enemyFleets = FleetReader.GetKnownEnemyFleets(faction);
+
+                    // Build list of known factions (player first, then enemies by name)
+                    knownFactions.Clear();
+                    knownFactions.Add(faction); // Player faction always first
+                    var enemyFactions = enemyFleets
+                        .Where(f => f.faction != null)
+                        .Select(f => f.faction)
+                        .Distinct()
+                        .OrderBy(f => f.displayName);
+                    knownFactions.AddRange(enemyFactions);
+
+                    // Apply faction filter
+                    if (factionFilterIndex >= 0 && factionFilterIndex < knownFactions.Count)
+                    {
+                        var filterFaction = knownFactions[factionFilterIndex];
+                        if (filterFaction == faction)
+                        {
+                            items.AddRange(FleetReader.GetPlayerFleets(faction));
+                        }
+                        else
+                        {
+                            items.AddRange(enemyFleets.Where(f => f.faction == filterFaction));
+                        }
+                    }
+                    else
+                    {
+                        // No filter - show all, grouped by faction
+                        items.AddRange(FleetReader.GetPlayerFleets(faction));
+                        // Group enemy fleets by faction
+                        foreach (var enemyFaction in enemyFactions)
+                        {
+                            items.AddRange(enemyFleets.Where(f => f.faction == enemyFaction));
+                        }
+                    }
                 }
                 else
                 {
@@ -95,6 +140,7 @@ namespace TISpeech.ReviewMode.Screens
         public override string ToggleViewMode()
         {
             showAllMode = !showAllMode;
+            factionFilterIndex = -1; // Reset faction filter when toggling view mode
             Refresh();
 
             var faction = GameControl.control?.activePlayer;
@@ -102,12 +148,63 @@ namespace TISpeech.ReviewMode.Screens
             {
                 int myFleets = FleetReader.GetPlayerFleets(faction).Count;
                 int knownEnemy = FleetReader.GetKnownEnemyFleets(faction).Count;
-                return $"Showing all known fleets: {myFleets} yours, {knownEnemy} enemy";
+                string factionHint = knownFactions.Count > 1 ? " Use [ and ] to filter by faction." : "";
+                return $"Showing all known fleets: {myFleets} yours, {knownEnemy} enemy.{factionHint}";
             }
             else
             {
                 return $"Showing your fleets only: {items.Count} fleet{(items.Count != 1 ? "s" : "")}";
             }
+        }
+
+        /// <summary>
+        /// Indicates this screen supports faction filtering in all mode.
+        /// </summary>
+        public override bool SupportsFactionFilter => showAllMode && knownFactions.Count > 1;
+
+        /// <summary>
+        /// Cycle to the next faction filter.
+        /// </summary>
+        public override string NextFactionFilter()
+        {
+            if (!showAllMode || knownFactions.Count <= 1)
+                return null;
+
+            factionFilterIndex++;
+            if (factionFilterIndex >= knownFactions.Count)
+                factionFilterIndex = -1; // Back to "all"
+
+            Refresh();
+            return GetFactionFilterAnnouncement();
+        }
+
+        /// <summary>
+        /// Cycle to the previous faction filter.
+        /// </summary>
+        public override string PreviousFactionFilter()
+        {
+            if (!showAllMode || knownFactions.Count <= 1)
+                return null;
+
+            factionFilterIndex--;
+            if (factionFilterIndex < -1)
+                factionFilterIndex = knownFactions.Count - 1;
+
+            Refresh();
+            return GetFactionFilterAnnouncement();
+        }
+
+        private string GetFactionFilterAnnouncement()
+        {
+            if (factionFilterIndex < 0 || factionFilterIndex >= knownFactions.Count)
+            {
+                return $"All factions: {items.Count} fleet{(items.Count != 1 ? "s" : "")}";
+            }
+
+            var filteredFaction = knownFactions[factionFilterIndex];
+            var playerFaction = GameControl.control?.activePlayer;
+            string factionLabel = filteredFaction == playerFaction ? "Your fleets" : filteredFaction.displayName;
+            return $"{factionLabel}: {items.Count} fleet{(items.Count != 1 ? "s" : "")}";
         }
 
         public override string ReadItemSummary(int index)

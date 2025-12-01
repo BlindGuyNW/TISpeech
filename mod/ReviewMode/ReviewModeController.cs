@@ -373,6 +373,17 @@ namespace TISpeech.ReviewMode
             isActive = true;
             isInMenuMode = false;
 
+            // Check if there's already a notification showing - go directly to notification mode
+            var notificationController = NotificationScreenController.singleton;
+            if (notificationController != null &&
+                notificationController.singleAlertBox != null &&
+                notificationController.singleAlertBox.activeSelf)
+            {
+                MelonLogger.Msg("Review mode activated with pending notification - entering notification mode");
+                EnterNotificationMode(notificationController);
+                return;
+            }
+
             // Reset navigation to initial state (Council screen)
             navigation.Reset();
 
@@ -390,6 +401,38 @@ namespace TISpeech.ReviewMode
             }
 
             MelonLogger.Msg("Review mode activated (in-game) with hierarchical navigation");
+        }
+
+        /// <summary>
+        /// Activate Review Mode directly into notification sub-mode.
+        /// Called when a notification appears while Review Mode is not active.
+        /// </summary>
+        public void ActivateForNotification(NotificationScreenController controller)
+        {
+            try
+            {
+                if (controller == null)
+                {
+                    MelonLogger.Error("ActivateForNotification: controller is null");
+                    return;
+                }
+
+                TIInputManager.BlockKeybindings();
+                isActive = true;
+                isInMenuMode = false;
+
+                // Go directly to notification mode without initializing normal navigation
+                EnterNotificationMode(controller);
+
+                MelonLogger.Msg("Review mode activated directly into notification mode");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in ActivateForNotification: {ex.Message}");
+                // Fall back to normal activation if something goes wrong
+                isActive = false;
+                TIInputManager.RestoreKeybindings();
+            }
         }
 
         private void ActivateMenuMode()

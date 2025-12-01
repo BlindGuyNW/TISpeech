@@ -146,6 +146,24 @@ namespace TISpeech.ReviewMode.Screens
         public virtual bool SupportsLetterNavigation => false;
 
         /// <summary>
+        /// Whether this screen supports faction filtering.
+        /// Override and return true for screens that can filter by faction (e.g., Fleets in All mode).
+        /// </summary>
+        public virtual bool SupportsFactionFilter => false;
+
+        /// <summary>
+        /// Cycle to the next faction filter.
+        /// Returns announcement text describing the new filter, or null if not supported.
+        /// </summary>
+        public virtual string NextFactionFilter() => null;
+
+        /// <summary>
+        /// Cycle to the previous faction filter.
+        /// Returns announcement text describing the new filter, or null if not supported.
+        /// </summary>
+        public virtual string PreviousFactionFilter() => null;
+
+        /// <summary>
         /// Get the display name of an item for letter navigation purposes.
         /// Override to return the sortable name of the item at the given index.
         /// </summary>
