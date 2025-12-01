@@ -149,6 +149,9 @@ namespace TISpeech.ReviewMode.Readers
             // Relations section
             sections.Add(CreateRelationsSection(nation));
 
+            // Claims section - territorial claims and unification status
+            sections.Add(CreateClaimsSection(nation));
+
             // Adjacency section - neighboring nations
             sections.Add(CreateAdjacencySection(nation));
 
@@ -869,6 +872,292 @@ namespace TISpeech.ReviewMode.Readers
             }
 
             return section;
+        }
+
+        private ISection CreateClaimsSection(TINationState nation)
+        {
+            var section = new DataSection("Claims");
+
+            try
+            {
+                // 1. Our outward claims - regions we claim but don't own
+                var outwardClaims = nation.claims?
+                    .Where(r => r.nation != nation && r.nation != null)
+                    .OrderBy(r => r.nation?.displayName ?? "")
+                    .ThenBy(r => r.displayName)
+                    .ToList() ?? new List<TIRegionState>();
+
+                if (outwardClaims.Count > 0)
+                {
+                    section.AddItem("--- Our Claims ---", $"{outwardClaims.Count} regions we claim but don't own");
+
+                    // Group by nation for easier reading
+                    var byNation = outwardClaims.GroupBy(r => r.nation).OrderBy(g => g.Key?.displayName ?? "");
+
+                    foreach (var group in byNation)
+                    {
+                        var ownerNation = group.Key;
+                        var regions = group.ToList();
+
+                        foreach (var region in regions)
+                        {
+                            string label = region.displayName;
+                            string value = $"owned by {ownerNation?.displayName ?? "Unknown"}";
+
+                            // Flag if this is the owner's capital - critical for unification
+                            bool isCapital = (region == ownerNation?.capital);
+                            if (isCapital)
+                            {
+                                value += " (CAPITAL)";
+                            }
+
+                            string detail = BuildOutwardClaimDetail(region, ownerNation, nation, isCapital);
+                            section.AddItem(label, value, detail);
+                        }
+                    }
+                }
+                else
+                {
+                    section.AddItem("No outward claims", "We don't claim any regions outside our borders");
+                }
+
+                // 2. Claims against us - nations that claim our regions
+                var claimsAgainstUs = new List<(TINationState claimant, TIRegionState region, bool isHostile)>();
+
+                if (nation.regions != null)
+                {
+                    foreach (var region in nation.regions)
+                    {
+                        var claimants = region.NationsWithClaim(
+                            requireExtantNation: true,
+                            requireExtantClaim: true,
+                            includeCurrentOwner: false);
+
+                        foreach (var claimant in claimants)
+                        {
+                            bool isHostile = claimant.hostileClaims?.Contains(region) ?? false;
+                            claimsAgainstUs.Add((claimant, region, isHostile));
+                        }
+                    }
+                }
+
+                if (claimsAgainstUs.Count > 0)
+                {
+                    section.AddItem("--- Claims Against Us ---", $"{claimsAgainstUs.Count} claims on our territory");
+
+                    // Group by claimant nation
+                    var byClaimant = claimsAgainstUs
+                        .GroupBy(c => c.claimant)
+                        .OrderByDescending(g => g.Any(c => c.region == nation.capital)) // Capital claimants first
+                        .ThenBy(g => g.Key?.displayName ?? "");
+
+                    foreach (var group in byClaimant)
+                    {
+                        var claimant = group.Key;
+                        var claims = group.ToList();
+                        bool claimsOurCapital = claims.Any(c => c.region == nation.capital);
+
+                        string label = claimant?.displayName ?? "Unknown";
+                        string value = $"claims {claims.Count} region{(claims.Count > 1 ? "s" : "")}";
+
+                        if (claimsOurCapital)
+                        {
+                            value += " (INCLUDING CAPITAL!)";
+                        }
+
+                        string detail = BuildClaimsAgainstUsDetail(claimant, claims, nation);
+                        section.AddItem(label, value, detail);
+                    }
+                }
+                else
+                {
+                    section.AddItem("No claims against us", "No other nations claim our territory");
+                }
+
+                // 3. Hostile claims we hold - regions causing cohesion/unrest penalties
+                if (nation.hostileClaims != null && nation.hostileClaims.Count > 0)
+                {
+                    float cohesionImpact = nation.hostileClaimsImpactOnCohesion;
+                    float unrestImpact = nation.hostileClaimsImpactOnUnrest;
+
+                    string impactStr = "";
+                    if (cohesionImpact != 0)
+                        impactStr += $"cohesion {cohesionImpact:+0.0;-0.0}";
+                    if (unrestImpact != 0)
+                    {
+                        if (!string.IsNullOrEmpty(impactStr)) impactStr += ", ";
+                        impactStr += $"unrest {unrestImpact:+0.0;-0.0}";
+                    }
+
+                    section.AddItem("--- Hostile Claims We Hold ---",
+                        $"{nation.hostileClaims.Count} regions, {impactStr}");
+
+                    foreach (var region in nation.hostileClaims.OrderBy(r => r.displayName))
+                    {
+                        section.AddItem(region.displayName, "hostile claim",
+                            "This region was taken by force and causes stability penalties until the population accepts our rule.");
+                    }
+                }
+
+                // 4. Unification status
+                AddUnificationStatus(section, nation);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error building claims section: {ex.Message}");
+                section.AddItem("Error loading claims data");
+            }
+
+            return section;
+        }
+
+        private string BuildOutwardClaimDetail(TIRegionState region, TINationState owner, TINationState viewer, bool isCapital)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Region: {region.displayName}");
+            sb.AppendLine($"Current owner: {owner?.displayName ?? "Unknown"}");
+            sb.AppendLine($"Population: {FormatPopulation(region.population)}");
+
+            if (isCapital)
+            {
+                sb.AppendLine();
+                sb.AppendLine("This is the owner's CAPITAL region.");
+                sb.AppendLine("Claiming another nation's capital is required for unification.");
+
+                // Check if we could unify with them
+                if (owner != null && viewer.eligibleUnifications?.Contains(owner) == true)
+                {
+                    sb.AppendLine("UNIFICATION AVAILABLE: Same faction controls both nations!");
+                }
+                else if (owner != null && viewer.candidateUnifications?.Contains(owner) == true)
+                {
+                    sb.AppendLine("Unification possible if same faction gains control of both executives.");
+                }
+            }
+
+            // Check if region is adjacent to us
+            bool isAdjacent = region.AdjacentRegions(IAmAnInvadingArmy: false)?
+                .Any(r => r.nation == viewer) ?? false;
+            if (isAdjacent)
+            {
+                sb.AppendLine();
+                sb.AppendLine("This region borders our territory.");
+            }
+
+            return sb.ToString();
+        }
+
+        private string BuildClaimsAgainstUsDetail(TINationState claimant, List<(TINationState claimant, TIRegionState region, bool isHostile)> claims, TINationState viewer)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Nation: {claimant?.displayName ?? "Unknown"}");
+            sb.AppendLine($"Claims {claims.Count} of our regions:");
+            sb.AppendLine();
+
+            foreach (var claim in claims.OrderByDescending(c => c.region == viewer.capital))
+            {
+                string regionInfo = claim.region.displayName;
+                if (claim.region == viewer.capital)
+                    regionInfo += " (OUR CAPITAL)";
+                if (claim.isHostile)
+                    regionInfo += " [hostile claim]";
+                sb.AppendLine($"  - {regionInfo}");
+            }
+
+            // Warning about capital claims
+            if (claims.Any(c => c.region == viewer.capital))
+            {
+                sb.AppendLine();
+                sb.AppendLine("WARNING: This nation claims our capital!");
+                sb.AppendLine("If they gain executive control of our nation, they could unify us into their territory.");
+            }
+
+            // Check relationship
+            if (viewer.wars?.Contains(claimant) == true)
+            {
+                sb.AppendLine();
+                sb.AppendLine("We are currently AT WAR with this nation.");
+            }
+            else if (viewer.rivals?.Contains(claimant) == true)
+            {
+                sb.AppendLine();
+                sb.AppendLine("This nation is our RIVAL.");
+            }
+            else if (viewer.allies?.Contains(claimant) == true)
+            {
+                sb.AppendLine();
+                sb.AppendLine("This nation is our ALLY (claims may be peaceful).");
+            }
+
+            return sb.ToString();
+        }
+
+        private void AddUnificationStatus(DataSection section, TINationState nation)
+        {
+            try
+            {
+                var eligible = nation.eligibleUnifications;
+                var candidates = nation.candidateUnifications;
+
+                if ((eligible == null || eligible.Count == 0) && (candidates == null || candidates.Count == 0))
+                {
+                    return; // No unification info to show
+                }
+
+                section.AddItem("--- Unification Status ---", "");
+
+                // Eligible unifications - can do RIGHT NOW
+                if (eligible != null && eligible.Count > 0)
+                {
+                    foreach (var target in eligible)
+                    {
+                        string label = $"Can unify with {target.displayName}";
+                        string value = "READY NOW";
+
+                        var sb = new StringBuilder();
+                        sb.AppendLine($"Unification with {target.displayName} is available now.");
+                        sb.AppendLine("Both nations have consolidated executive power under the same faction.");
+                        sb.AppendLine();
+                        sb.AppendLine($"Their population: {FormatPopulation(target.population)}");
+                        sb.AppendLine($"Their GDP: ${FormatLargeNumber(target.GDP)}");
+                        sb.AppendLine($"Their regions: {target.regions?.Count ?? 0}");
+                        sb.AppendLine();
+                        sb.AppendLine("Unification will merge their territory, resources, and military into this nation.");
+
+                        section.AddItem(label, value, sb.ToString());
+                    }
+                }
+
+                // Candidate unifications - possible but need same faction control
+                if (candidates != null && candidates.Count > 0)
+                {
+                    var pendingCandidates = candidates.Where(c => eligible?.Contains(c) != true).ToList();
+
+                    if (pendingCandidates.Count > 0)
+                    {
+                        foreach (var target in pendingCandidates)
+                        {
+                            string label = $"Potential: {target.displayName}";
+                            string value = "needs same faction control";
+
+                            var sb = new StringBuilder();
+                            sb.AppendLine($"Unification with {target.displayName} is possible.");
+                            sb.AppendLine("Requirements:");
+                            sb.AppendLine("  - Same faction must control both executives");
+                            sb.AppendLine("  - Both nations must have consolidated power");
+                            sb.AppendLine();
+                            sb.AppendLine($"Their population: {FormatPopulation(target.population)}");
+                            sb.AppendLine($"Their executive: {target.executiveFaction?.displayName ?? "None"}");
+
+                            section.AddItem(label, value, sb.ToString());
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Could not add unification status: {ex.Message}");
+            }
         }
 
         private ISection CreateAdjacencySection(TINationState nation)
