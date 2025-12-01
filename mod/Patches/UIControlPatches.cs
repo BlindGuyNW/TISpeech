@@ -1631,5 +1631,251 @@ namespace TISpeech.Patches
         }
 
         #endregion
+
+        #region Special Prompt Patches
+
+        /// <summary>
+        /// Patch NotificationScreenController.PushNationPromptResponse to detect special prompt panels.
+        /// This is called when nation-level prompts need responses (army removal, diplomatic responses, call to war).
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "PushNationPromptResponse")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_PushNationPromptResponse_Postfix(NotificationScreenController __instance)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                // Check which special panel became active
+                var promptType = ReviewMode.SpecialPromptSubMode.DetectActivePromptType(__instance);
+                if (promptType == ReviewMode.SpecialPromptType.None)
+                    return;
+
+                var reviewMode = ReviewMode.ReviewModeController.Instance;
+                if (reviewMode == null)
+                {
+                    MelonLogger.Msg($"Special prompt appeared ({promptType}) but ReviewModeController not initialized");
+                    return;
+                }
+
+                // If Review Mode is not active, activate it
+                if (!reviewMode.IsActive)
+                {
+                    MelonLogger.Msg($"Special prompt appeared ({promptType}) - auto-activating Review Mode");
+                    reviewMode.ActivateForSpecialPrompt(__instance, promptType);
+                    return;
+                }
+
+                // Review Mode is already active - enter special prompt sub-mode
+                if (reviewMode.IsInNotificationMode)
+                {
+                    reviewMode.ExitNotificationMode();
+                }
+
+                reviewMode.EnterSpecialPromptMode(__instance, promptType);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in PushNationPromptResponse patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch for when the Remove Armies prompt is dismissed via Propose Alliance.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "removeArmies_ProposeAlliancePressed")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_RemoveArmies_ProposeAlliance_Postfix()
+        {
+            ExitSpecialPromptModeIfActive();
+        }
+
+        /// <summary>
+        /// Patch for when the Remove Armies prompt is dismissed via Declare War.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "removeArmies_DeclareWarPressed")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_RemoveArmies_DeclareWar_Postfix()
+        {
+            ExitSpecialPromptModeIfActive();
+        }
+
+        /// <summary>
+        /// Patch for when the Remove Armies prompt is dismissed via Go Home.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "removeArmies_GoHomePressed")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_RemoveArmies_GoHome_Postfix()
+        {
+            ExitSpecialPromptModeIfActive();
+        }
+
+        /// <summary>
+        /// Patch for when the Diplomatic Response panel is dismissed via Confirm.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "OnResponseConfirm")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_OnResponseConfirm_Postfix()
+        {
+            ExitSpecialPromptModeIfActive();
+        }
+
+        /// <summary>
+        /// Patch for when the Diplomatic Response panel is dismissed via Decline.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "OnResponseDecline")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_OnResponseDecline_Postfix()
+        {
+            ExitSpecialPromptModeIfActive();
+        }
+
+        /// <summary>
+        /// Patch for when the Call to War panel is dismissed via Join War.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "JoinWarButton")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_JoinWarButton_Postfix()
+        {
+            ExitSpecialPromptModeIfActive();
+        }
+
+        /// <summary>
+        /// Patch for when the Call to War panel is dismissed via Decline.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "DeclineWarButton")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_DeclineWarButton_Postfix()
+        {
+            ExitSpecialPromptModeIfActive();
+        }
+
+        /// <summary>
+        /// Helper to exit special prompt mode if it's active.
+        /// </summary>
+        private static void ExitSpecialPromptModeIfActive()
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                var reviewMode = ReviewMode.ReviewModeController.Instance;
+                if (reviewMode?.IsInSpecialPromptMode == true)
+                {
+                    reviewMode.ExitSpecialPromptMode();
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error exiting special prompt mode: {ex.Message}");
+            }
+        }
+
+        #endregion
+
+        #region Mission Target Selection Patches
+
+        /// <summary>
+        /// Patch NotificationScreenController.PushMissionPromptResponse to enter mission target mode.
+        /// This is called when a Sabotage Project or Steal Project mission succeeds and the player
+        /// must select which project to target.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "PushMissionPromptResponse")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_PushMissionPromptResponse_Postfix(
+            NotificationScreenController __instance, Prompt currentMissionPrompt)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                // Only handle project selection prompts (Prompt is a struct, so no null check needed)
+                string promptType = currentMissionPrompt.name;
+                if (promptType != "PromptSabotageProject" && promptType != "PromptStealProject")
+                    return;
+
+                var reviewMode = ReviewMode.ReviewModeController.Instance;
+                if (reviewMode == null)
+                {
+                    MelonLogger.Msg($"Mission target selection appeared ({promptType}) but ReviewModeController not initialized");
+                    return;
+                }
+
+                // If Review Mode is not active, activate it
+                if (!reviewMode.IsActive)
+                {
+                    MelonLogger.Msg($"Mission target selection appeared ({promptType}) - auto-activating Review Mode");
+                    reviewMode.ActivateForMissionTarget(__instance, promptType);
+                    return;
+                }
+
+                // Review Mode is already active - enter mission target sub-mode
+                // Exit notification mode if we're in it (mission target selection replaces it)
+                if (reviewMode.IsInNotificationMode)
+                {
+                    reviewMode.ExitNotificationMode();
+                }
+
+                // Enter mission target mode
+                reviewMode.EnterMissionTargetMode(__instance, promptType);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in PushMissionPromptResponse patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch NotificationScreenController.OnClickMissionTargetConfirm to exit mission target mode.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "OnClickMissionTargetConfirm")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_OnClickMissionTargetConfirm_Postfix()
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                var reviewMode = ReviewMode.ReviewModeController.Instance;
+                if (reviewMode?.IsInMissionTargetMode == true)
+                {
+                    reviewMode.ExitMissionTargetMode();
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in OnClickMissionTargetConfirm patch: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch NotificationScreenController.OnClickMissionTargetCancel to exit mission target mode.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "OnClickMissionTargetCancel")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_OnClickMissionTargetCancel_Postfix()
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady)
+                    return;
+
+                var reviewMode = ReviewMode.ReviewModeController.Instance;
+                if (reviewMode?.IsInMissionTargetMode == true)
+                {
+                    reviewMode.ExitMissionTargetMode();
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in OnClickMissionTargetCancel patch: {ex.Message}");
+            }
+        }
+
+        #endregion
     }
 }

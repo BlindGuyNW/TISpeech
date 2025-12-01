@@ -64,6 +64,14 @@ namespace TISpeech.ReviewMode
         private CombatSubMode combatMode = null;
         public bool IsInCombatMode => combatMode != null;
 
+        // Mission target sub-mode (for Sabotage Project and Steal Project missions)
+        private MissionTargetSubMode missionTargetMode = null;
+        public bool IsInMissionTargetMode => missionTargetMode != null;
+
+        // Special prompt sub-mode (for Army Removal, Diplomatic Response, Call to War)
+        private SpecialPromptSubMode specialPromptMode = null;
+        public bool IsInSpecialPromptMode => specialPromptMode != null;
+
         // Menu mode (for pre-game menu navigation)
         private bool isInMenuMode = false;
         public bool IsInMenuMode => isInMenuMode;
@@ -310,11 +318,21 @@ namespace TISpeech.ReviewMode
                 {
                     inputHandled = HandleCombatModeInput();
                 }
-                // Priority order: Policy > Notification > Transfer > Selection > Grid > Navigation
+                // Priority order: Policy > MissionTarget > Notification > Transfer > Selection > Grid > Navigation
                 // Policy mode takes highest priority (handles Set National Policy mission results)
                 else if (policyMode != null)
                 {
                     inputHandled = HandlePolicyModeInput();
+                }
+                // Mission target mode (Sabotage Project, Steal Project)
+                else if (missionTargetMode != null)
+                {
+                    inputHandled = HandleMissionTargetModeInput();
+                }
+                // Special prompt mode (Army Removal, Diplomatic Response, Call to War)
+                else if (specialPromptMode != null)
+                {
+                    inputHandled = HandleSpecialPromptModeInput();
                 }
                 // If in notification sub-mode, handle notification input
                 else if (notificationMode != null)
@@ -503,6 +521,8 @@ namespace TISpeech.ReviewMode
                 policyMode = null;
                 transferMode = null;
                 combatMode = null;
+                missionTargetMode = null;
+                specialPromptMode = null;
                 menuContextStack.Clear();
 
                 TISpeechMod.Speak("Review mode off", interrupt: true);
@@ -1493,6 +1513,353 @@ namespace TISpeech.ReviewMode
             }
 
             // Allow time controls even in policy mode
+            if (HandleTimeControls())
+                return true;
+
+            return false;
+        }
+
+        #endregion
+
+        #region Mission Target Sub-Mode
+
+        /// <summary>
+        /// Activate Review Mode directly into mission target sub-mode.
+        /// Called when a mission target selection appears while Review Mode is not active.
+        /// </summary>
+        public void ActivateForMissionTarget(NotificationScreenController controller, string promptType)
+        {
+            try
+            {
+                if (controller == null)
+                {
+                    MelonLogger.Error("ActivateForMissionTarget: controller is null");
+                    return;
+                }
+
+                TIInputManager.BlockKeybindings();
+                isActive = true;
+                isInMenuMode = false;
+
+                // Go directly to mission target mode without initializing normal navigation
+                EnterMissionTargetMode(controller, promptType);
+
+                MelonLogger.Msg("Review mode activated directly into mission target mode");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in ActivateForMissionTarget: {ex.Message}");
+                // Fall back to normal activation if something goes wrong
+                isActive = false;
+                TIInputManager.RestoreKeybindings();
+            }
+        }
+
+        /// <summary>
+        /// Enter mission target mode. Called by patch when mission target selection appears.
+        /// </summary>
+        public void EnterMissionTargetMode(NotificationScreenController controller, string promptType)
+        {
+            try
+            {
+                if (controller == null)
+                {
+                    MelonLogger.Error("EnterMissionTargetMode: controller is null");
+                    return;
+                }
+
+                missionTargetMode = new MissionTargetSubMode(controller, promptType);
+
+                if (missionTargetMode.Count == 0)
+                {
+                    MelonLogger.Msg("Mission target selection has no targets available");
+                    missionTargetMode = null;
+                    return;
+                }
+
+                // Clear any EventSystem selection to prevent Enter from submitting focused buttons
+                EventSystem.current?.SetSelectedGameObject(null);
+
+                TISpeechMod.Speak(missionTargetMode.GetEntryAnnouncement(), interrupt: true);
+                MelonLogger.Msg($"Entered mission target mode with {missionTargetMode.Count} targets");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error entering mission target mode: {ex.Message}");
+                missionTargetMode = null;
+            }
+        }
+
+        /// <summary>
+        /// Exit mission target mode. Called by patch when mission target UI is dismissed.
+        /// </summary>
+        public void ExitMissionTargetMode()
+        {
+            if (missionTargetMode == null)
+                return;
+
+            missionTargetMode = null;
+            MelonLogger.Msg("Exited mission target mode");
+        }
+
+        private bool HandleMissionTargetModeInput()
+        {
+            if (missionTargetMode == null) return false;
+
+            // Navigate options (Numpad 8/2, Numpad 4/6, Up/Down arrows)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                missionTargetMode.Previous();
+                TISpeechMod.Speak(missionTargetMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                missionTargetMode.Next();
+                TISpeechMod.Speak(missionTargetMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Select current target (Numpad Enter, Numpad 5, Enter, Right arrow)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                var option = missionTargetMode.CurrentOption;
+                if (option != null)
+                {
+                    missionTargetMode.SelectCurrent();
+                    TISpeechMod.Speak($"Selected: {option.Label}. Press plus or backslash to confirm.", interrupt: true);
+                }
+                return true;
+            }
+
+            // Confirm selection (Numpad +, Backslash)
+            if (Input.GetKeyDown(KeyCode.KeypadPlus) || Input.GetKeyDown(KeyCode.Backslash))
+            {
+                if (missionTargetMode.HasSelection)
+                {
+                    TISpeechMod.Speak("Confirming target selection", interrupt: true);
+                    missionTargetMode.Confirm();
+                    // Mode will be exited by the patch when confirm completes
+                }
+                else
+                {
+                    TISpeechMod.Speak("Select a target first by pressing Enter", interrupt: true);
+                }
+                return true;
+            }
+
+            // Read current option detail (Numpad *, Minus)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                TISpeechMod.Speak(missionTargetMode.GetCurrentDetail(), interrupt: true);
+                return true;
+            }
+
+            // List all options (Numpad /, Equals)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
+            {
+                TISpeechMod.Speak(missionTargetMode.ListAllOptions(), interrupt: true);
+                return true;
+            }
+
+            // Cancel and abort mission (Escape, Left arrow, Backspace)
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
+            {
+                TISpeechMod.Speak("Cancelling and aborting mission", interrupt: true);
+                missionTargetMode.Cancel();
+                // Mode will be exited by the patch when cancel completes
+                return true;
+            }
+
+            // Block exit keys (don't allow exiting Review Mode while in mission target selection)
+            if (Input.GetKeyDown(KeyCode.Keypad0) ||
+                ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.R)))
+            {
+                TISpeechMod.Speak("Cannot exit Review Mode during target selection. Press Escape to cancel.", interrupt: true);
+                return true;
+            }
+
+            // Letter navigation (A-Z) - jump to option starting with that letter
+            char? letter = GetPressedLetter();
+            if (letter.HasValue)
+            {
+                int newIndex = missionTargetMode.FindNextByLetter(letter.Value);
+                if (newIndex >= 0)
+                {
+                    missionTargetMode.SetIndex(newIndex);
+                    TISpeechMod.Speak(missionTargetMode.GetCurrentAnnouncement(), interrupt: true);
+                }
+                else
+                {
+                    TISpeechMod.Speak($"No targets starting with {letter.Value}", interrupt: true);
+                }
+                return true;
+            }
+
+            // Allow time controls even in mission target mode
+            if (HandleTimeControls())
+                return true;
+
+            return false;
+        }
+
+        #endregion
+
+        #region Special Prompt Sub-Mode
+
+        /// <summary>
+        /// Activate Review Mode directly into special prompt sub-mode.
+        /// Called when a special prompt panel appears while Review Mode is not active.
+        /// </summary>
+        public void ActivateForSpecialPrompt(NotificationScreenController controller, SpecialPromptType promptType)
+        {
+            try
+            {
+                if (controller == null)
+                {
+                    MelonLogger.Error("ActivateForSpecialPrompt: controller is null");
+                    return;
+                }
+
+                TIInputManager.BlockKeybindings();
+                isActive = true;
+                isInMenuMode = false;
+
+                // Go directly to special prompt mode without initializing normal navigation
+                EnterSpecialPromptMode(controller, promptType);
+
+                MelonLogger.Msg($"Review mode activated directly into special prompt mode: {promptType}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in ActivateForSpecialPrompt: {ex.Message}");
+                // Fall back to normal activation if something goes wrong
+                isActive = false;
+                TIInputManager.RestoreKeybindings();
+            }
+        }
+
+        /// <summary>
+        /// Enter special prompt mode. Called by patch when a special prompt panel appears.
+        /// </summary>
+        public void EnterSpecialPromptMode(NotificationScreenController controller, SpecialPromptType promptType)
+        {
+            try
+            {
+                if (controller == null)
+                {
+                    MelonLogger.Error("EnterSpecialPromptMode: controller is null");
+                    return;
+                }
+
+                specialPromptMode = new SpecialPromptSubMode(controller, promptType);
+
+                if (specialPromptMode.Count == 0)
+                {
+                    MelonLogger.Msg("Special prompt panel has no options available");
+                    specialPromptMode = null;
+                    return;
+                }
+
+                // Clear any EventSystem selection to prevent Enter from submitting focused buttons
+                EventSystem.current?.SetSelectedGameObject(null);
+
+                TISpeechMod.Speak(specialPromptMode.GetEntryAnnouncement(), interrupt: true);
+                MelonLogger.Msg($"Entered special prompt mode ({promptType}) with {specialPromptMode.Count} options");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error entering special prompt mode: {ex.Message}");
+                specialPromptMode = null;
+            }
+        }
+
+        /// <summary>
+        /// Exit special prompt mode. Called by patch when special prompt panel is dismissed.
+        /// </summary>
+        public void ExitSpecialPromptMode()
+        {
+            if (specialPromptMode == null)
+                return;
+
+            specialPromptMode = null;
+            MelonLogger.Msg("Exited special prompt mode");
+        }
+
+        private bool HandleSpecialPromptModeInput()
+        {
+            if (specialPromptMode == null) return false;
+
+            // Navigate options (Numpad 8/2, Numpad 4/6, Up/Down arrows)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                specialPromptMode.Previous();
+                TISpeechMod.Speak(specialPromptMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                specialPromptMode.Next();
+                TISpeechMod.Speak(specialPromptMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Activate current option (Numpad Enter, Numpad 5, Enter, Right arrow)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                var option = specialPromptMode.CurrentOption;
+                if (option != null)
+                {
+                    if (option.IsInformational)
+                    {
+                        // Re-read informational items
+                        TISpeechMod.Speak(option.Label, interrupt: true);
+                    }
+                    else
+                    {
+                        TISpeechMod.Speak($"Activating: {option.Label}", interrupt: true);
+                        specialPromptMode.Activate();
+                        // Mode will be exited by the patch when the panel is dismissed
+                    }
+                }
+                return true;
+            }
+
+            // Read current option detail (Numpad *, Minus)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                TISpeechMod.Speak(specialPromptMode.GetCurrentDetail(), interrupt: true);
+                return true;
+            }
+
+            // List all options (Numpad /, Equals)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
+            {
+                TISpeechMod.Speak(specialPromptMode.ListAllOptions(), interrupt: true);
+                return true;
+            }
+
+            // Allow exiting Review Mode with Numpad 0 or Ctrl+R (dismisses the prompt too)
+            if (Input.GetKeyDown(KeyCode.Keypad0) ||
+                ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.R)))
+            {
+                // Just exit review mode - the user will need to handle the prompt with mouse
+                TISpeechMod.Speak("Exiting Review Mode. Prompt still pending.", interrupt: true);
+                DeactivateReviewMode();
+                return true;
+            }
+
+            // Escape also exits (user may want to dismiss via mouse)
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
+            {
+                TISpeechMod.Speak("Exiting Review Mode. Prompt still pending.", interrupt: true);
+                DeactivateReviewMode();
+                return true;
+            }
+
+            // Allow time controls even in special prompt mode
             if (HandleTimeControls())
                 return true;
 
