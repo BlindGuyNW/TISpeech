@@ -1713,10 +1713,11 @@ namespace TISpeech.Patches
 
         /// <summary>
         /// Patch for when the Diplomatic Response panel is dismissed via Confirm.
+        /// Note: The game has a typo in the method name (OnReponseConfirm, missing 's').
         /// </summary>
-        [HarmonyPatch(typeof(NotificationScreenController), "OnResponseConfirm")]
+        [HarmonyPatch(typeof(NotificationScreenController), "OnReponseConfirm")]
         [HarmonyPostfix]
-        public static void NotificationScreenController_OnResponseConfirm_Postfix()
+        public static void NotificationScreenController_OnReponseConfirm_Postfix()
         {
             ExitSpecialPromptModeIfActive();
         }
