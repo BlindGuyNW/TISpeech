@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
@@ -291,6 +292,7 @@ namespace TISpeech.ReviewMode
 
         /// <summary>
         /// Get the detail text for the current option (for Numpad *).
+        /// Uses the stored TIProjectTemplate to provide comprehensive project information.
         /// </summary>
         public string GetCurrentDetail()
         {
@@ -298,12 +300,118 @@ namespace TISpeech.ReviewMode
             if (option == null)
                 return "No target selected";
 
+            // If we have the project template, build detailed info from it
+            if (option.Project != null)
+            {
+                return BuildProjectDetailText(option.Project);
+            }
+
+            // Fallback to tooltip-extracted detail if available
             if (!string.IsNullOrEmpty(option.DetailText))
             {
                 return $"{option.Label}: {option.DetailText}";
             }
 
             return option.Label;
+        }
+
+        /// <summary>
+        /// Build detailed text from a TIProjectTemplate.
+        /// </summary>
+        private string BuildProjectDetailText(TIProjectTemplate project)
+        {
+            var sb = new StringBuilder();
+            sb.Append(project.displayName);
+
+            // Category
+            string category = FormatCategory(project.techCategory);
+            sb.Append($". Category: {category}");
+
+            // Summary/description
+            try
+            {
+                string summary = project.summary;
+                if (!string.IsNullOrEmpty(summary) && summary != project.displayName)
+                {
+                    sb.Append($". {TISpeechMod.CleanText(summary)}");
+                }
+            }
+            catch { /* Summary may throw if localization fails */ }
+
+            // Repeatable
+            if (project.repeatable)
+                sb.Append(". Repeatable");
+
+            // One-time globally (unique project)
+            if (project.oneTimeGlobally)
+                sb.Append(". Unique project, one-time globally");
+
+            // Org granted
+            if (!string.IsNullOrEmpty(project.orgGranted))
+            {
+                try
+                {
+                    var orgTemplate = TemplateManager.Find<TIOrgTemplate>(project.orgGranted);
+                    sb.Append($". Grants org: {orgTemplate?.displayName ?? project.orgGranted}");
+                }
+                catch
+                {
+                    sb.Append($". Grants org: {project.orgGranted}");
+                }
+            }
+
+            // Resources granted
+            if (project.resourcesGranted != null && project.resourcesGranted.Count > 0)
+            {
+                var resources = project.resourcesGranted
+                    .Where(r => r.resource != FactionResource.None && r.value != 0)
+                    .Select(r => $"{r.resource}: {r.value:+#;-#;0}");
+                var resourceStr = string.Join(", ", resources);
+                if (!string.IsNullOrEmpty(resourceStr))
+                    sb.Append($". Grants: {resourceStr}");
+            }
+
+            // Ship parts unlocked
+            try
+            {
+                var shipParts = project.ShipPartUnlocks;
+                if (shipParts != null && shipParts.Count > 0)
+                {
+                    var partNames = shipParts.Select(p => p.displayName);
+                    sb.Append($". Unlocks ship parts: {string.Join(", ", partNames)}");
+                }
+            }
+            catch { /* May fail if templates not loaded */ }
+
+            // Hab modules unlocked
+            try
+            {
+                var habModules = project.HabModuleUnlocks();
+                if (habModules != null && habModules.Count > 0)
+                {
+                    var moduleNames = habModules.Select(m => m.displayName);
+                    sb.Append($". Unlocks hab modules: {string.Join(", ", moduleNames)}");
+                }
+            }
+            catch { /* May fail if templates not loaded */ }
+
+            return sb.ToString();
+        }
+
+        private string FormatCategory(TechCategory category)
+        {
+            return category switch
+            {
+                TechCategory.Materials => "Materials",
+                TechCategory.SpaceScience => "Space Science",
+                TechCategory.Energy => "Energy",
+                TechCategory.LifeScience => "Life Science",
+                TechCategory.MilitaryScience => "Military Science",
+                TechCategory.InformationScience => "Information Science",
+                TechCategory.SocialScience => "Social Science",
+                TechCategory.Xenology => "Xenology",
+                _ => category.ToString()
+            };
         }
 
         /// <summary>
