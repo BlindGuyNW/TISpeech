@@ -38,6 +38,7 @@ namespace TISpeech.ReviewMode
         private FleetsScreen fleetsScreen;
         private SpaceBodiesScreen spaceBodiesScreen;
         private HabsScreen habsScreen;
+        private ShipClassesScreen shipClassesScreen;
         private FactionIntelScreen factionIntelScreen;
         private AlienThreatScreen alienThreatScreen;
         private GlobalStatusScreen globalStatusScreen;
@@ -75,6 +76,10 @@ namespace TISpeech.ReviewMode
         // Diplomacy sub-mode (for faction trade negotiations)
         private DiplomacySubMode diplomacyMode = null;
         public bool IsInDiplomacyMode => diplomacyMode != null;
+
+        // Ship designer sub-mode (for creating/editing ship designs)
+        private ShipDesignerSubMode shipDesignerMode = null;
+        public bool IsInShipDesignerMode => shipDesignerMode != null;
 
         // Diplomacy greeting mode (for the initial greeting before trade)
         private DiplomacyGreetingMode greetingMode = null;
@@ -164,6 +169,11 @@ namespace TISpeech.ReviewMode
             habsScreen.OnEnterSelectionMode = EnterSelectionMode;
             habsScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
+            shipClassesScreen = new ShipClassesScreen();
+            shipClassesScreen.OnEnterSelectionMode = EnterSelectionMode;
+            shipClassesScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            shipClassesScreen.OnEnterShipDesignerMode = EnterShipDesignerMode;
+
             factionIntelScreen = new FactionIntelScreen();
             factionIntelScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
@@ -183,6 +193,7 @@ namespace TISpeech.ReviewMode
                 fleetsScreen,
                 spaceBodiesScreen,
                 habsScreen,
+                shipClassesScreen,
                 factionIntelScreen,
                 alienThreatScreen,
                 globalStatusScreen
@@ -341,6 +352,11 @@ namespace TISpeech.ReviewMode
                 else if (specialPromptMode != null)
                 {
                     inputHandled = HandleSpecialPromptModeInput();
+                }
+                // Ship designer sub-mode (creating/editing ship designs)
+                else if (shipDesignerMode != null)
+                {
+                    inputHandled = HandleShipDesignerModeInput();
                 }
                 // If in notification sub-mode, handle notification input
                 else if (notificationMode != null)
@@ -2191,6 +2207,174 @@ namespace TISpeech.ReviewMode
             // Allow time controls even in special prompt mode
             if (HandleTimeControls())
                 return true;
+
+            return false;
+        }
+
+        #endregion
+
+        #region Ship Designer Mode
+
+        /// <summary>
+        /// Enter ship designer mode for creating a new design or editing an existing one.
+        /// </summary>
+        /// <param name="existingDesign">The design to edit, or null for a new design</param>
+        public void EnterShipDesignerMode(TISpaceShipTemplate existingDesign = null)
+        {
+            try
+            {
+                var faction = GameControl.control?.activePlayer;
+                if (faction == null)
+                {
+                    TISpeechMod.Speak("No active faction", interrupt: true);
+                    return;
+                }
+
+                if (!Readers.ShipClassReader.CanDesignShips(faction))
+                {
+                    TISpeechMod.Speak("Cannot design ships yet. Research hull technologies first.", interrupt: true);
+                    return;
+                }
+
+                shipDesignerMode = new ShipDesignerSubMode(faction, existingDesign);
+                shipDesignerMode.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+                shipDesignerMode.OnDesignSaved = (design) =>
+                {
+                    ExitShipDesignerMode();
+                    // Refresh the ship classes screen
+                    shipClassesScreen?.Refresh();
+                    TISpeechMod.Speak($"Design saved: {design?.className ?? "Unknown"}", interrupt: true);
+                };
+                shipDesignerMode.OnCancelled = () =>
+                {
+                    ExitShipDesignerMode();
+                    TISpeechMod.Speak("Design cancelled", interrupt: true);
+                };
+                shipDesignerMode.OnEnterTextInput = (prompt, callback) =>
+                {
+                    // For now, use a default name - proper text input would need a different mechanism
+                    // TODO: Implement text input mode
+                    TISpeechMod.Speak($"{prompt}. Using default name. Text input not yet implemented.", interrupt: true);
+                    callback(null);
+                };
+
+                // Announce entry
+                if (existingDesign != null)
+                {
+                    TISpeechMod.Speak($"Ship Designer: Editing {existingDesign.className}. Navigate with arrows, Enter to select, Escape to back out.", interrupt: true);
+                }
+                else
+                {
+                    TISpeechMod.Speak("Ship Designer: New design. Select a hull to begin.", interrupt: true);
+                }
+
+                shipDesignerMode.AnnounceCurrentState();
+                MelonLogger.Msg($"Entered ship designer mode. Editing: {existingDesign?.className ?? "New design"}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error entering ship designer mode: {ex.Message}");
+                TISpeechMod.Speak("Failed to enter ship designer mode", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Exit ship designer mode.
+        /// </summary>
+        public void ExitShipDesignerMode()
+        {
+            shipDesignerMode = null;
+            MelonLogger.Msg("Exited ship designer mode");
+        }
+
+        private bool HandleShipDesignerModeInput()
+        {
+            if (shipDesignerMode == null) return false;
+
+            // Navigate options (Numpad 8/2, Numpad 4/6, Up/Down arrows)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                shipDesignerMode.Previous();
+                shipDesignerMode.AnnounceCurrentState();
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                shipDesignerMode.Next();
+                shipDesignerMode.AnnounceCurrentState();
+                return true;
+            }
+
+            // Select/drill in (Numpad Enter, Numpad 5, Enter, Right arrow)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                shipDesignerMode.Select();
+                return true;
+            }
+
+            // Back out (Escape, Left arrow, Backspace)
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
+            {
+                shipDesignerMode.Back();
+                return true;
+            }
+
+            // Read current detail (Numpad *, Minus)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                string detail = shipDesignerMode.ReadCurrentDetail();
+                TISpeechMod.Speak(detail, interrupt: true);
+                return true;
+            }
+
+            // Adjust value up (Numpad +, Backslash)
+            if (Input.GetKeyDown(KeyCode.KeypadPlus) || Input.GetKeyDown(KeyCode.Backslash))
+            {
+                // Used for propellant tanks and armor points
+                if (shipDesignerMode.CurrentStep == DesignerStep.NavigateZoneItems &&
+                    shipDesignerMode.CurrentZone == DesignZone.Propulsion &&
+                    shipDesignerMode.CurrentZoneItemIndex == 3) // Propellant
+                {
+                    shipDesignerMode.AdjustPropellant(1);
+                }
+                else if (shipDesignerMode.CurrentStep == DesignerStep.SelectComponent)
+                {
+                    shipDesignerMode.AdjustArmor(1);
+                }
+                return true;
+            }
+
+            // Adjust value down (Numpad -)
+            if (Input.GetKeyDown(KeyCode.KeypadMinus))
+            {
+                if (shipDesignerMode.CurrentStep == DesignerStep.NavigateZoneItems &&
+                    shipDesignerMode.CurrentZone == DesignZone.Propulsion &&
+                    shipDesignerMode.CurrentZoneItemIndex == 3) // Propellant
+                {
+                    shipDesignerMode.AdjustPropellant(-1);
+                }
+                else if (shipDesignerMode.CurrentStep == DesignerStep.SelectComponent)
+                {
+                    shipDesignerMode.AdjustArmor(-1);
+                }
+                return true;
+            }
+
+            // Autodesign (A key) - let the AI fill in the design
+            if (Input.GetKeyDown(KeyCode.A))
+            {
+                shipDesignerMode.ApplyAutodesign();
+                return true;
+            }
+
+            // Block exit from Review Mode while in designer
+            if (Input.GetKeyDown(KeyCode.Keypad0) ||
+                ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.R)))
+            {
+                TISpeechMod.Speak("Press Escape to exit designer first", interrupt: true);
+                return true;
+            }
 
             return false;
         }
