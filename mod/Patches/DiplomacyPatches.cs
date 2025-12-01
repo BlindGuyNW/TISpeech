@@ -2,6 +2,7 @@ using System;
 using HarmonyLib;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
+using TISpeech.ReviewMode;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -38,7 +39,7 @@ namespace TISpeech.Patches
                 if (!TISpeechMod.IsReady || __instance == null)
                     return;
 
-                // Add handlers to all UI elements
+                // Add handlers to all UI elements for mouse hover
                 AddFactionHeaderHandlers(__instance);
                 AddFeedbackTextHandler(__instance);
                 AddTabButtonHandlers(__instance);
@@ -46,10 +47,189 @@ namespace TISpeech.Patches
                 AddExecuteTradeButtonHandler(__instance);
 
                 MelonLogger.Msg("Added Diplomacy window accessibility handlers");
+
+                // If Review Mode is active, enter diplomacy mode
+                var reviewMode = ReviewModeController.Instance;
+                if (reviewMode != null && reviewMode.IsActive)
+                {
+                    // Use a delayed call to ensure the UI is fully set up
+                    MelonCoroutines.Start(EnterDiplomacyModeDelayed(__instance));
+                }
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error in DiplomacyController.Setup patch: {ex.Message}");
+            }
+        }
+
+        private static System.Collections.IEnumerator EnterDiplomacyModeDelayed(DiplomacyController controller)
+        {
+            yield return null; // Wait one frame for UI to finish setup
+
+            var reviewMode = ReviewModeController.Instance;
+            if (reviewMode != null && reviewMode.IsActive && controller != null)
+            {
+                reviewMode.EnterDiplomacyMode(controller);
+            }
+        }
+
+        /// <summary>
+        /// Patch CleanupListeners to exit diplomacy mode when diplomacy closes
+        /// </summary>
+        [HarmonyPatch(typeof(DiplomacyController), "CleanupListeners")]
+        [HarmonyPostfix]
+        public static void DiplomacyController_CleanupListeners_Postfix()
+        {
+            try
+            {
+                var reviewMode = ReviewModeController.Instance;
+                if (reviewMode != null && reviewMode.IsInDiplomacyMode)
+                {
+                    reviewMode.ExitDiplomacyMode();
+                    MelonLogger.Msg("Exited diplomacy mode due to CleanupListeners");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in DiplomacyController.CleanupListeners patch: {ex.Message}");
+            }
+        }
+
+        #endregion
+
+        #region Diplomacy Greeting UI Patches
+
+        /// <summary>
+        /// Patch OpenDiplomacyGreetingUI to enter greeting mode when the diplomacy greeting appears.
+        /// This is the initial screen before the trade window that shows the faction's greeting.
+        /// </summary>
+        [HarmonyPatch(typeof(NotificationScreenController), "OpenDiplomacyGreetingUI")]
+        [HarmonyPostfix]
+        public static void NotificationScreenController_OpenDiplomacyGreetingUI_Postfix(NotificationScreenController __instance)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady || __instance == null)
+                    return;
+
+                // Use a delayed call to ensure the UI is fully set up
+                MelonCoroutines.Start(EnterGreetingModeDelayed(__instance));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in OpenDiplomacyGreetingUI patch: {ex.Message}");
+            }
+        }
+
+        private static System.Collections.IEnumerator EnterGreetingModeDelayed(NotificationScreenController controller)
+        {
+            yield return null; // Wait one frame for UI to finish setup
+
+            try
+            {
+                var reviewMode = ReviewModeController.Instance;
+                if (reviewMode != null && reviewMode.IsActive && controller != null)
+                {
+                    reviewMode.EnterGreetingMode(controller);
+                    MelonLogger.Msg("Entered greeting mode for diplomacy greeting UI");
+                }
+                else
+                {
+                    // Fallback: just announce if Review Mode isn't active
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append("Diplomacy greeting. ");
+
+                    if (controller.factionDiplomacyGreetingTitleText != null &&
+                        !string.IsNullOrEmpty(controller.factionDiplomacyGreetingTitleText.text))
+                    {
+                        sb.Append(TISpeechMod.CleanText(controller.factionDiplomacyGreetingTitleText.text));
+                        sb.Append(". ");
+                    }
+
+                    if (controller.factionDiplomacyGreetingHeadlineText != null &&
+                        !string.IsNullOrEmpty(controller.factionDiplomacyGreetingHeadlineText.text))
+                    {
+                        sb.Append(TISpeechMod.CleanText(controller.factionDiplomacyGreetingHeadlineText.text));
+                        sb.Append(". ");
+                    }
+
+                    TISpeechMod.Speak(sb.ToString(), interrupt: true);
+
+                    // Add hover handler to the continue button
+                    if (controller.factionDiplomacyGreetingContinueButton != null)
+                    {
+                        AddButtonHoverHandler(controller.factionDiplomacyGreetingContinueButton, "Continue to Trade");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error entering greeting mode: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Add hover handler to a button for accessibility.
+        /// </summary>
+        private static void AddButtonHoverHandler(Button button, string label)
+        {
+            try
+            {
+                if (button == null)
+                    return;
+
+                EventTrigger trigger = button.gameObject.GetComponent<EventTrigger>();
+                if (trigger == null)
+                {
+                    trigger = button.gameObject.AddComponent<EventTrigger>();
+                }
+                else
+                {
+                    trigger.triggers.RemoveAll(t => t.eventID == EventTriggerType.PointerEnter);
+                }
+
+                string capturedLabel = label;
+                Button capturedButton = button;
+
+                EventTrigger.Entry enterEntry = new EventTrigger.Entry();
+                enterEntry.eventID = EventTriggerType.PointerEnter;
+                enterEntry.callback.AddListener((data) => OnGreetingButtonHover(capturedButton, capturedLabel));
+                trigger.triggers.Add(enterEntry);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error adding button hover handler for {label}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Called when hovering over a diplomacy greeting button.
+        /// </summary>
+        private static void OnGreetingButtonHover(Button button, string label)
+        {
+            try
+            {
+                if (!TISpeechMod.IsReady || button == null)
+                    return;
+
+                string announcement = button.interactable
+                    ? label
+                    : $"{label}, unavailable";
+
+                // Debounce
+                float currentTime = Time.unscaledTime;
+                if (announcement == lastDiplomacyText && (currentTime - lastDiplomacyTime) < DIPLOMACY_DEBOUNCE_TIME)
+                    return;
+
+                lastDiplomacyText = announcement;
+                lastDiplomacyTime = currentTime;
+
+                TISpeechMod.Speak(announcement, interrupt: false);
+                MelonLogger.Msg($"Diplomacy greeting button hover: {announcement}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in greeting button hover: {ex.Message}");
             }
         }
 

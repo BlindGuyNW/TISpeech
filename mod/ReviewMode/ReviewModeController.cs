@@ -72,6 +72,14 @@ namespace TISpeech.ReviewMode
         private SpecialPromptSubMode specialPromptMode = null;
         public bool IsInSpecialPromptMode => specialPromptMode != null;
 
+        // Diplomacy sub-mode (for faction trade negotiations)
+        private DiplomacySubMode diplomacyMode = null;
+        public bool IsInDiplomacyMode => diplomacyMode != null;
+
+        // Diplomacy greeting mode (for the initial greeting before trade)
+        private DiplomacyGreetingMode greetingMode = null;
+        public bool IsInGreetingMode => greetingMode != null;
+
         // Menu mode (for pre-game menu navigation)
         private bool isInMenuMode = false;
         public bool IsInMenuMode => isInMenuMode;
@@ -339,6 +347,16 @@ namespace TISpeech.ReviewMode
                 {
                     inputHandled = HandleNotificationModeInput();
                 }
+                // If in diplomacy greeting mode, handle greeting input
+                else if (greetingMode != null)
+                {
+                    inputHandled = HandleGreetingModeInput();
+                }
+                // If in diplomacy sub-mode, handle diplomacy input
+                else if (diplomacyMode != null)
+                {
+                    inputHandled = HandleDiplomacyModeInput();
+                }
                 // If in transfer planning sub-mode, handle transfer input
                 else if (transferMode != null)
                 {
@@ -523,6 +541,7 @@ namespace TISpeech.ReviewMode
                 combatMode = null;
                 missionTargetMode = null;
                 specialPromptMode = null;
+                diplomacyMode = null;
                 menuContextStack.Clear();
 
                 TISpeechMod.Speak("Review mode off", interrupt: true);
@@ -1378,6 +1397,316 @@ namespace TISpeech.ReviewMode
             // Allow time controls even in notification mode
             if (HandleTimeControls())
                 return true;
+
+            return false;
+        }
+
+        #endregion
+
+        #region Diplomacy Greeting Mode
+
+        /// <summary>
+        /// Enter greeting mode for the diplomacy greeting screen.
+        /// Called by patch when OpenDiplomacyGreetingUI is called.
+        /// </summary>
+        public void EnterGreetingMode(NotificationScreenController controller)
+        {
+            try
+            {
+                if (controller == null)
+                {
+                    MelonLogger.Error("EnterGreetingMode: controller is null");
+                    return;
+                }
+
+                greetingMode = new DiplomacyGreetingMode(controller);
+
+                if (greetingMode.Count == 0)
+                {
+                    MelonLogger.Msg("Greeting has no navigable items");
+                    greetingMode = null;
+                    return;
+                }
+
+                // Clear any EventSystem selection
+                EventSystem.current?.SetSelectedGameObject(null);
+
+                TISpeechMod.Speak(greetingMode.GetEntryAnnouncement(), interrupt: true);
+                MelonLogger.Msg($"Entered greeting mode with {greetingMode.Count} items");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error entering greeting mode: {ex.Message}");
+                greetingMode = null;
+            }
+        }
+
+        /// <summary>
+        /// Exit greeting mode.
+        /// </summary>
+        public void ExitGreetingMode()
+        {
+            if (greetingMode == null)
+                return;
+
+            greetingMode = null;
+            MelonLogger.Msg("Exited greeting mode");
+        }
+
+        private bool HandleGreetingModeInput()
+        {
+            if (greetingMode == null) return false;
+
+            // Navigate (Up/Down arrows, Numpad 8/2)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                greetingMode.Previous();
+                TISpeechMod.Speak(greetingMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                greetingMode.Next();
+                TISpeechMod.Speak(greetingMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Activate / Continue (Enter, Numpad 5, Numpad Enter)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return))
+            {
+                if (greetingMode.Activate())
+                {
+                    // Continue button was clicked, exit greeting mode
+                    TISpeechMod.Speak("Continuing to trade", interrupt: true);
+                    ExitGreetingMode();
+                }
+                else
+                {
+                    // Just read the current item
+                    TISpeechMod.Speak(greetingMode.CurrentItem, interrupt: true);
+                }
+                return true;
+            }
+
+            // Read full content (Numpad *, Minus)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                TISpeechMod.Speak(greetingMode.GetFullContent(), interrupt: true);
+                return true;
+            }
+
+            // Escape - just exit (cancel the diplomacy)
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                TISpeechMod.Speak("Cancelling diplomacy", interrupt: true);
+                ExitGreetingMode();
+                return true;
+            }
+
+            // No key handled - return false to avoid debounce issues
+            return false;
+        }
+
+        #endregion
+
+        #region Diplomacy Sub-Mode
+
+        /// <summary>
+        /// Enter diplomacy mode. Called by patch when DiplomacyController.Setup() is called.
+        /// </summary>
+        public void EnterDiplomacyMode(DiplomacyController controller)
+        {
+            try
+            {
+                if (controller == null)
+                {
+                    MelonLogger.Error("EnterDiplomacyMode: controller is null");
+                    return;
+                }
+
+                diplomacyMode = new DiplomacySubMode(controller);
+
+                if (diplomacyMode.SectionCount == 0)
+                {
+                    MelonLogger.Msg("Diplomacy has no navigable sections, staying in current mode");
+                    diplomacyMode = null;
+                    return;
+                }
+
+                // Clear any EventSystem selection
+                EventSystem.current?.SetSelectedGameObject(null);
+
+                TISpeechMod.Speak(diplomacyMode.GetEntryAnnouncement(), interrupt: true);
+                MelonLogger.Msg($"Entered diplomacy mode with {diplomacyMode.SectionCount} sections");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error entering diplomacy mode: {ex.Message}");
+                diplomacyMode = null;
+            }
+        }
+
+        /// <summary>
+        /// Exit diplomacy mode. Called when diplomacy is closed.
+        /// </summary>
+        public void ExitDiplomacyMode()
+        {
+            if (diplomacyMode == null)
+                return;
+
+            diplomacyMode = null;
+            MelonLogger.Msg("Exited diplomacy mode");
+        }
+
+        private bool HandleDiplomacyModeInput()
+        {
+            if (diplomacyMode == null) return false;
+
+            // QUANTITY INPUT MODE - special handling when entering quantities
+            if (diplomacyMode.IsEnteringQuantity)
+            {
+                // Handle digit input
+                for (int i = 0; i <= 9; i++)
+                {
+                    KeyCode keyCode = (KeyCode)((int)KeyCode.Alpha0 + i);
+                    KeyCode keypadCode = (KeyCode)((int)KeyCode.Keypad0 + i);
+
+                    if (Input.GetKeyDown(keyCode) || Input.GetKeyDown(keypadCode))
+                    {
+                        diplomacyMode.HandleDigit((char)('0' + i));
+                        TISpeechMod.Speak(diplomacyMode.GetQuantityInputAnnouncement(), interrupt: true);
+                        return true;
+                    }
+                }
+
+                // Backspace - delete last digit
+                if (Input.GetKeyDown(KeyCode.Backspace))
+                {
+                    diplomacyMode.HandleBackspace();
+                    TISpeechMod.Speak(diplomacyMode.GetQuantityInputAnnouncement(), interrupt: true);
+                    return true;
+                }
+
+                // Enter - apply quantity
+                if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Return) ||
+                    Input.GetKeyDown(KeyCode.Keypad5))
+                {
+                    string result = diplomacyMode.ApplyQuantity();
+                    TISpeechMod.Speak(result, interrupt: true);
+                    return true;
+                }
+
+                // Escape - cancel quantity input
+                if (Input.GetKeyDown(KeyCode.Escape))
+                {
+                    string result = diplomacyMode.CancelQuantityMode();
+                    TISpeechMod.Speak(result, interrupt: true);
+                    return true;
+                }
+
+                // No key handled in quantity mode - return false to avoid debounce issues
+                return false;
+            }
+
+            // NORMAL NAVIGATION MODE
+
+            // Navigate (Up/Down arrows, Numpad 8/2) - navigates sections OR items depending on drill state
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                diplomacyMode.Previous();
+                TISpeechMod.Speak(diplomacyMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                diplomacyMode.Next();
+                TISpeechMod.Speak(diplomacyMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Also Numpad 4/6 for navigation (same behavior as 8/2)
+            if (Input.GetKeyDown(KeyCode.Keypad4))
+            {
+                diplomacyMode.Previous();
+                TISpeechMod.Speak(diplomacyMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad6))
+            {
+                diplomacyMode.Next();
+                TISpeechMod.Speak(diplomacyMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Drill down / Activate (Numpad Enter, Numpad 5, Enter, Right arrow)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                string result = diplomacyMode.DrillDown();
+                if (result == "CANCEL_DIPLOMACY")
+                {
+                    TISpeechMod.Speak("Cancelling diplomacy", interrupt: true);
+                    ExitDiplomacyMode();
+                }
+                else
+                {
+                    TISpeechMod.Speak(result, interrupt: true);
+                }
+                return true;
+            }
+
+            // Back out (Escape, Left arrow, Backspace)
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) ||
+                Input.GetKeyDown(KeyCode.Backspace))
+            {
+                if (diplomacyMode.BackOut())
+                {
+                    // Backed out to section level
+                    TISpeechMod.Speak(diplomacyMode.GetCurrentAnnouncement(), interrupt: true);
+                }
+                else
+                {
+                    // At section level, exit diplomacy
+                    TISpeechMod.Speak("Exiting diplomacy", interrupt: true);
+                    ExitDiplomacyMode();
+                }
+                return true;
+            }
+
+            // Delete - remove item from trade
+            if (Input.GetKeyDown(KeyCode.Delete))
+            {
+                string result = diplomacyMode.RemoveCurrentItem();
+                TISpeechMod.Speak(result, interrupt: true);
+                return true;
+            }
+
+            // Read current detail (Numpad *, Minus)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                TISpeechMod.Speak(diplomacyMode.GetCurrentDetail(), interrupt: true);
+                return true;
+            }
+
+            // List all items in current section (Numpad /, Equals)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
+            {
+                TISpeechMod.Speak(diplomacyMode.ListCurrentSection(), interrupt: true);
+                return true;
+            }
+
+            // Block Review Mode exit keys while in diplomacy
+            if (Input.GetKeyDown(KeyCode.Keypad0))
+            {
+                TISpeechMod.Speak("Press Escape to exit diplomacy mode", interrupt: true);
+                return true;
+            }
+            if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.R))
+            {
+                TISpeechMod.Speak("Press Escape to exit diplomacy mode", interrupt: true);
+                return true;
+            }
 
             return false;
         }
