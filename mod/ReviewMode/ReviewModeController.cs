@@ -38,6 +38,9 @@ namespace TISpeech.ReviewMode
         private FleetsScreen fleetsScreen;
         private SpaceBodiesScreen spaceBodiesScreen;
         private HabsScreen habsScreen;
+        private FactionIntelScreen factionIntelScreen;
+        private AlienThreatScreen alienThreatScreen;
+        private GlobalStatusScreen globalStatusScreen;
 
         // Selection sub-mode (for multi-step actions like mission assignment)
         private SelectionSubMode selectionMode = null;
@@ -145,6 +148,15 @@ namespace TISpeech.ReviewMode
             habsScreen.OnEnterSelectionMode = EnterSelectionMode;
             habsScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
+            factionIntelScreen = new FactionIntelScreen();
+            factionIntelScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
+            alienThreatScreen = new AlienThreatScreen();
+            alienThreatScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
+            globalStatusScreen = new GlobalStatusScreen();
+            globalStatusScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
             // Register in-game screens with navigation
             var screens = new List<ScreenBase>
             {
@@ -154,7 +166,10 @@ namespace TISpeech.ReviewMode
                 orgMarketScreen,
                 fleetsScreen,
                 spaceBodiesScreen,
-                habsScreen
+                habsScreen,
+                factionIntelScreen,
+                alienThreatScreen,
+                globalStatusScreen
             };
 
             navigation.RegisterScreens(screens);
