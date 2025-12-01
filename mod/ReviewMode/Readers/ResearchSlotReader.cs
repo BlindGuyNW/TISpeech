@@ -474,7 +474,8 @@ namespace TISpeech.ReviewMode.Readers
                 float categoryMod = faction.SumCategoryModifiers(category.Value);
                 section.AddItem($"{FormatCategory(category.Value)} Modifier", $"+{categoryMod * 100:F0}%");
 
-                float effectiveRate = faction.GetEffectiveResearchPerDay(category.Value, slot >= 3);
+                // Use GetEffectiveResearch with the slot's daily amount, not the total daily research
+                float effectiveRate = faction.GetEffectiveResearch(dailyToSlot, category.Value, slot >= 3);
                 section.AddItem("Effective Rate", $"{effectiveRate:F1}/day");
             }
 
