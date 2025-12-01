@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
+using PavonisInteractive.TerraInvicta.Actions;
 using TISpeech.ReviewMode.Sections;
 
 // Alias for the nested enum to avoid ambiguity
@@ -21,6 +22,16 @@ namespace TISpeech.ReviewMode.Readers
         /// Callback for setting control point priorities.
         /// </summary>
         public Action<TIControlPoint, PriorityType, int> OnSetPriority { get; set; }
+
+        /// <summary>
+        /// Callback for speaking announcements.
+        /// </summary>
+        public Action<string, bool> OnSpeak { get; set; }
+
+        /// <summary>
+        /// Callback for entering selection mode.
+        /// </summary>
+        public Action<string, List<SelectionOption>, Action<int>> OnEnterSelectionMode { get; set; }
 
         public string ReadSummary(TINationState nation)
         {
@@ -120,8 +131,20 @@ namespace TISpeech.ReviewMode.Readers
             // All Control Points section (who controls what)
             sections.Add(CreateAllControlPointsSection(nation));
 
-            // Military section
-            sections.Add(CreateMilitarySection(nation));
+            // Military summary section
+            sections.Add(CreateMilitarySummarySection(nation));
+
+            // Armies section - detailed army info with operations
+            if (nation.armies != null && nation.armies.Count > 0)
+            {
+                sections.Add(CreateArmiesSection(nation, faction));
+            }
+
+            // Nuclear Weapons section - if nation has nukes or program
+            if (nation.numNuclearWeapons > 0 || nation.nuclearProgram)
+            {
+                sections.Add(CreateNuclearSection(nation, faction));
+            }
 
             // Relations section
             sections.Add(CreateRelationsSection(nation));
@@ -389,21 +412,41 @@ namespace TISpeech.ReviewMode.Readers
             return section;
         }
 
-        private ISection CreateMilitarySection(TINationState nation)
+        private ISection CreateMilitarySummarySection(TINationState nation)
         {
-            var section = new DataSection("Military");
+            var section = new DataSection("Military Summary");
 
             section.AddItem("Military Tech", $"{nation.militaryTechLevel:F1}");
-            section.AddItem("Armies", (nation.armies?.Count ?? 0).ToString());
+
+            // Army count with status breakdown
+            int totalArmies = nation.armies?.Count ?? 0;
+            if (totalArmies > 0)
+            {
+                int inBattle = nation.armies.Count(a => a.InBattleWithArmies());
+                int moving = nation.armies.Count(a => a.IsMoving && !a.InBattleWithArmies());
+                string armyStatus = $"{totalArmies}";
+                if (inBattle > 0) armyStatus += $" ({inBattle} in battle)";
+                else if (moving > 0) armyStatus += $" ({moving} moving)";
+                section.AddItem("Armies", armyStatus);
+            }
+            else
+            {
+                section.AddItem("Armies", "0");
+            }
+
             section.AddItem("Navies", nation.numNavies.ToString());
             section.AddItem("STO Fighters", nation.numSTOFighters.ToString());
-            section.AddItem("Nuclear Weapons", nation.numNuclearWeapons.ToString());
 
-            if (nation.nuclearProgram)
+            // Nuclear summary
+            if (nation.numNuclearWeapons > 0)
             {
-                section.AddItem("Nuclear Program", "Active");
+                section.AddItem("Nuclear Weapons", nation.numNuclearWeapons.ToString());
             }
-            else if (nation.numNuclearWeapons == 0)
+            else if (nation.nuclearProgram)
+            {
+                section.AddItem("Nuclear Program", "Active (building)");
+            }
+            else
             {
                 section.AddItem("Nuclear Program", "None");
             }
@@ -418,26 +461,373 @@ namespace TISpeech.ReviewMode.Readers
                 section.AddItem("Space Defenses", "Available");
             }
 
-            // List armies if any
-            if (nation.armies != null && nation.armies.Count > 0)
+            return section;
+        }
+
+        private ISection CreateArmiesSection(TINationState nation, TIFactionState playerFaction)
+        {
+            var section = new DataSection("Armies");
+
+            if (nation.armies == null || nation.armies.Count == 0)
             {
-                foreach (var army in nation.armies.Take(5))
+                section.AddItem("No armies");
+                return section;
+            }
+
+            bool canControlArmies = nation.executiveFaction == playerFaction;
+
+            foreach (var army in nation.armies)
+            {
+                // Build army summary
+                int strengthPercent = (int)(army.strength * 100);
+                string location = army.currentRegion?.displayName ?? "Unknown";
+                string status = GetArmyStatusBrief(army);
+
+                string label = army.displayName;
+                string value = $"{strengthPercent}% in {location}";
+                if (!string.IsNullOrEmpty(status))
                 {
-                    string armyInfo = $"{army.displayName}";
-                    if (army.ref_region != null)
-                    {
-                        armyInfo += $" in {army.ref_region.displayName}";
-                    }
-                    section.AddItem("Army", armyInfo);
+                    value += $", {status}";
                 }
 
-                if (nation.armies.Count > 5)
+                // Build detailed info
+                string detail = BuildArmyDetail(army);
+
+                if (canControlArmies)
                 {
-                    section.AddItem("", $"...and {nation.armies.Count - 5} more armies");
+                    // Add as activatable item that opens army operations
+                    section.AddItem(label, value, detail,
+                        onActivate: () => ShowArmyOperations(army, playerFaction));
+                }
+                else
+                {
+                    section.AddItem(label, value, detail);
                 }
             }
 
             return section;
+        }
+
+        private string GetArmyStatusBrief(TIArmyState army)
+        {
+            if (army.InBattleWithArmies())
+                return "in battle";
+            if (army.IsMoving)
+                return "moving";
+            if (army.currentOperations?.Count > 0)
+            {
+                var op = army.currentOperations.FirstOrDefault();
+                return op?.operation?.GetDisplayName()?.ToLower() ?? "operating";
+            }
+            if (army.huntingXenofauna)
+                return "hunting";
+            if (!army.InFriendlyRegion)
+                return "hostile territory";
+            if (army.CanHeal() && army.strength < 1.0f)
+                return "healing";
+            return "";
+        }
+
+        private string BuildArmyDetail(TIArmyState army)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Army: {army.displayName}");
+            sb.AppendLine($"Strength: {army.strength * 100:F0}%");
+            sb.AppendLine($"Tech Level: {army.techLevel:F1}");
+            sb.AppendLine($"Deployment: {army.deploymentType}");
+            sb.AppendLine($"Current Region: {army.currentRegion?.displayName ?? "Unknown"}");
+            sb.AppendLine($"Home Region: {army.homeRegion?.displayName ?? "Unknown"}");
+
+            if (army.destinationQueue != null && army.destinationQueue.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Moving to: " + string.Join(" -> ", army.destinationQueue.Select(d => d.displayName)));
+            }
+
+            if (army.currentOperations != null && army.currentOperations.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Current operation:");
+                foreach (var op in army.currentOperations)
+                {
+                    sb.AppendLine($"  {op.operation?.GetDisplayName() ?? "Unknown"} -> {op.target?.displayName ?? "Unknown"}");
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine($"In Friendly Region: {(army.InFriendlyRegion ? "Yes" : "No")}");
+            sb.AppendLine($"Can Take Offensive Action: {(army.CanTakeOffensiveAction ? "Yes" : "No")}");
+
+            return sb.ToString();
+        }
+
+        private void ShowArmyOperations(TIArmyState army, TIFactionState playerFaction)
+        {
+            try
+            {
+                var availableOps = army.AvailableOperationList();
+
+                if (availableOps == null || availableOps.Count == 0)
+                {
+                    OnSpeak?.Invoke("No operations available for this army", true);
+                    return;
+                }
+
+                var options = new List<SelectionOption>();
+                foreach (var op in availableOps)
+                {
+                    string desc = GetOperationDescription(op, army);
+                    options.Add(new SelectionOption
+                    {
+                        Label = op.GetDisplayName(),
+                        DetailText = desc,
+                        Data = op
+                    });
+                }
+
+                OnEnterSelectionMode?.Invoke(
+                    $"Operations for {army.displayName}",
+                    options,
+                    (index) => ExecuteArmyOperation(army, (IOperation)options[index].Data, playerFaction)
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error showing army operations: {ex.Message}");
+                OnSpeak?.Invoke("Error loading operations", true);
+            }
+        }
+
+        private string GetOperationDescription(IOperation op, TIArmyState army)
+        {
+            if (op is DeployArmyOperation)
+                return "Move to a destination region";
+            if (op is AnnexRegionOperation)
+                return $"Annex current region (needs 80% strength, have {army.strength * 100:F0}%)";
+            if (op is RazeRegionOperation)
+                return $"Damage region economy (needs 50% strength, have {army.strength * 100:F0}%)";
+            if (op is SetHuntXenoformingOperation)
+                return "Enable hunting of alien megafauna";
+            if (op is CancelHuntXenoformingOperation)
+                return "Disable hunting of alien megafauna";
+            if (op is CancelArmyOperation)
+                return "Cancel current operation and movement";
+            if (op is ArmyGoHomeOperation)
+                return $"Return to home region ({army.homeRegion?.displayName ?? "Unknown"})";
+
+            return op.GetDisplayName();
+        }
+
+        private void ExecuteArmyOperation(TIArmyState army, IOperation operation, TIFactionState faction)
+        {
+            try
+            {
+                // Check if operation needs target selection
+                var possibleTargets = operation.GetPossibleTargets(army);
+
+                if (possibleTargets != null && possibleTargets.Count > 0)
+                {
+                    // Need to select a target
+                    var options = new List<SelectionOption>();
+                    foreach (var target in possibleTargets)
+                    {
+                        string detail = "";
+                        if (target is TIRegionState region)
+                        {
+                            detail = $"Region in {region.nation?.displayName ?? "Unknown"}";
+                        }
+
+                        options.Add(new SelectionOption
+                        {
+                            Label = target.displayName,
+                            DetailText = detail,
+                            Data = target
+                        });
+                    }
+
+                    OnEnterSelectionMode?.Invoke(
+                        $"Select target for {operation.GetDisplayName()}",
+                        options,
+                        (index) => ConfirmArmyOperation(army, operation, (TIGameState)options[index].Data, faction)
+                    );
+                }
+                else
+                {
+                    // Instant operation (target is self)
+                    ConfirmArmyOperation(army, operation, army, faction);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing army operation: {ex.Message}");
+                OnSpeak?.Invoke("Error executing operation", true);
+            }
+        }
+
+        private void ConfirmArmyOperation(TIArmyState army, IOperation operation, TIGameState target, TIFactionState faction)
+        {
+            try
+            {
+                var action = new ConfirmOperationAction(army, target, operation);
+                faction.playerControl.StartAction(action);
+
+                OnSpeak?.Invoke($"Started {operation.GetDisplayName()} on {target.displayName}", true);
+                MelonLogger.Msg($"Executed army operation: {operation.GetDisplayName()} on {target.displayName}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error confirming army operation: {ex.Message}");
+                OnSpeak?.Invoke("Error confirming operation", true);
+            }
+        }
+
+        private ISection CreateNuclearSection(TINationState nation, TIFactionState playerFaction)
+        {
+            var section = new DataSection("Nuclear Weapons");
+
+            // Nuclear arsenal count
+            section.AddItem("Arsenal", $"{nation.numNuclearWeapons} nuclear weapons");
+
+            // Nuclear program status
+            if (nation.nuclearProgram)
+            {
+                section.AddItem("Nuclear Program", "Active");
+            }
+            else
+            {
+                section.AddItem("Nuclear Program", "Not established");
+            }
+
+            // Defensive nukes (allies)
+            try
+            {
+                int defendingNukes = nation.NumNuclearWeaponsDefendingMe();
+                if (defendingNukes > nation.numNuclearWeapons)
+                {
+                    section.AddItem("Allied Nukes", $"{defendingNukes - nation.numNuclearWeapons} from allies");
+                }
+            }
+            catch { }
+
+            // Threatening nukes (enemies)
+            try
+            {
+                int threateningNukes = nation.NumNuclearWeaponsThreateningMeInWars();
+                if (threateningNukes > 0)
+                {
+                    section.AddItem("Enemy Nukes", $"{threateningNukes} threatening");
+                }
+            }
+            catch { }
+
+            // Launch capability - only if player controls executive
+            bool canLaunch = nation.executiveFaction == playerFaction && nation.numNuclearWeapons > 0;
+
+            if (canLaunch)
+            {
+                try
+                {
+                    var validTargets = nation.NuclearWeaponsTargets();
+                    if (validTargets != null && validTargets.Count > 0)
+                    {
+                        section.AddItem("Launch Nuclear Strike", $"{validTargets.Count} valid targets",
+                            $"Launch a nuclear weapon against an enemy target. You have {nation.numNuclearWeapons} weapons available.",
+                            onActivate: () => StartNuclearTargetSelection(nation, validTargets, playerFaction));
+                    }
+                    else
+                    {
+                        section.AddItem("Launch", "No valid targets available");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Warning($"Error getting nuclear targets: {ex.Message}");
+                    section.AddItem("Launch", "Error checking targets");
+                }
+            }
+            else if (nation.numNuclearWeapons > 0)
+            {
+                section.AddItem("Launch", "Requires executive control");
+            }
+
+            return section;
+        }
+
+        private void StartNuclearTargetSelection(TINationState nation, List<TIRegionState> targets, TIFactionState faction)
+        {
+            var options = new List<SelectionOption>();
+
+            foreach (var target in targets)
+            {
+                string nationName = target.nation?.displayName ?? "Unknown";
+                string pop = FormatPopulation(target.population);
+
+                options.Add(new SelectionOption
+                {
+                    Label = target.displayName,
+                    DetailText = $"Region in {nationName}, population {pop}",
+                    Data = target
+                });
+            }
+
+            OnEnterSelectionMode?.Invoke(
+                $"Select nuclear target ({nation.numNuclearWeapons} weapons available)",
+                options,
+                (index) => ConfirmNuclearStrike(nation, (TIRegionState)options[index].Data, faction)
+            );
+        }
+
+        private void ConfirmNuclearStrike(TINationState nation, TIRegionState target, TIFactionState faction)
+        {
+            // Double confirmation for nuclear strike
+            var confirmOptions = new List<SelectionOption>
+            {
+                new SelectionOption
+                {
+                    Label = "Confirm Launch",
+                    DetailText = $"Launch nuclear strike on {target.displayName}. This cannot be undone.",
+                    Data = true
+                },
+                new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Abort the nuclear strike",
+                    Data = false
+                }
+            };
+
+            OnEnterSelectionMode?.Invoke(
+                $"Confirm nuclear strike on {target.displayName}?",
+                confirmOptions,
+                (index) =>
+                {
+                    if ((bool)confirmOptions[index].Data)
+                    {
+                        ExecuteNuclearStrike(nation, target, faction);
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Nuclear strike cancelled", true);
+                    }
+                }
+            );
+        }
+
+        private void ExecuteNuclearStrike(TINationState nation, TIRegionState target, TIFactionState faction)
+        {
+            try
+            {
+                // Execute the nuclear strike via the region's method
+                target.NuclearAttackOnRegion(faction, nation);
+
+                OnSpeak?.Invoke($"Nuclear strike launched on {target.displayName}. Detonation in 30 minutes.", true);
+                MelonLogger.Msg($"Nuclear strike launched by {nation.displayName} on {target.displayName}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing nuclear strike: {ex.Message}");
+                OnSpeak?.Invoke("Error launching nuclear strike", true);
+            }
         }
 
         private ISection CreateRelationsSection(TINationState nation)
@@ -456,26 +846,18 @@ namespace TISpeech.ReviewMode.Readers
             // Allies
             if (nation.allies != null && nation.allies.Count > 0)
             {
-                foreach (var ally in nation.allies.Take(5))
+                foreach (var ally in nation.allies)
                 {
                     section.AddItem("Ally", ally.displayName);
-                }
-                if (nation.allies.Count > 5)
-                {
-                    section.AddItem("", $"...and {nation.allies.Count - 5} more allies");
                 }
             }
 
             // Rivals
             if (nation.rivals != null && nation.rivals.Count > 0)
             {
-                foreach (var rival in nation.rivals.Take(3))
+                foreach (var rival in nation.rivals)
                 {
                     section.AddItem("Rival", rival.displayName);
-                }
-                if (nation.rivals.Count > 3)
-                {
-                    section.AddItem("", $"...and {nation.rivals.Count - 3} more rivals");
                 }
             }
 
@@ -637,7 +1019,7 @@ namespace TISpeech.ReviewMode.Readers
         {
             var section = new DataSection("Regions");
 
-            foreach (var region in nation.regions.Take(10))
+            foreach (var region in nation.regions)
             {
                 string pop = FormatPopulation(region.population);
 
@@ -655,11 +1037,6 @@ namespace TISpeech.ReviewMode.Readers
                 string detail = BuildRegionDetail(region, nation);
 
                 section.AddItem(region.displayName, value, detail);
-            }
-
-            if (nation.regions.Count > 10)
-            {
-                section.AddItem("", $"...and {nation.regions.Count - 10} more regions");
             }
 
             return section;
@@ -692,12 +1069,8 @@ namespace TISpeech.ReviewMode.Readers
                 foreach (var group in byNation)
                 {
                     string nationName = group.Key == nation ? "same nation" : group.Key?.displayName ?? "unknown";
-                    var regionNames = group.Select(r => r.displayName).Take(5);
+                    var regionNames = group.Select(r => r.displayName);
                     sb.AppendLine($"  {nationName}: {string.Join(", ", regionNames)}");
-                    if (group.Count() > 5)
-                    {
-                        sb.AppendLine($"    ...and {group.Count() - 5} more");
-                    }
                 }
             }
 
@@ -900,13 +1273,13 @@ namespace TISpeech.ReviewMode.Readers
         }
 
         /// <summary>
-        /// Get all nations in the game.
+        /// Get all extant nations in the game (nations that currently exist with at least one region).
         /// </summary>
         public static List<TINationState> GetAllNations()
         {
             try
             {
-                return GameStateManager.AllNations()?.ToList() ?? new List<TINationState>();
+                return GameStateManager.AllExtantNations()?.ToList() ?? new List<TINationState>();
             }
             catch (Exception ex)
             {

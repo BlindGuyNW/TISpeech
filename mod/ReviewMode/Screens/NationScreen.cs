@@ -337,6 +337,10 @@ namespace TISpeech.ReviewMode.Screens
             cachedItemIndex = index;
             var nation = nations[index];
 
+            // Wire up callbacks for army operations and nuclear launch
+            nationReader.OnSpeak = OnSpeak;
+            nationReader.OnEnterSelectionMode = OnEnterSelectionMode;
+
             // Get base sections from reader
             cachedSections = nationReader.GetSections(nation);
 
