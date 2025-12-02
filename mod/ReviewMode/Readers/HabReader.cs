@@ -630,33 +630,32 @@ namespace TISpeech.ReviewMode.Readers
                 string slotLabel = GetSlotLabel(hab, sector, slotIndex);
 
                 // Option 1: Build from Earth (uses boost, has transit time)
-                string earthCostStr = FormatModuleCostDetailed(earthCost, faction);
-                int earthDays = (int)earthCost.completionTime_days;
+                // Game's GetString with includeCompletionTime will format like "10 Boost 50 Money 30 days"
+                string earthCostStr = FormatModuleCostWithTime(earthCost, faction);
                 string earthLabel = canAffordEarth
-                    ? $"From Earth: {earthCostStr}, {earthDays} days"
-                    : $"From Earth: {earthCostStr}, {earthDays} days (Cannot afford)";
+                    ? $"From Earth: {earthCostStr}"
+                    : $"From Earth: {earthCostStr} (Cannot afford)";
 
                 options.Add(new SelectionOption
                 {
                     Label = earthLabel,
                     DetailText = canAffordEarth
                         ? "Ship module from Earth using boost"
-                        : "Insufficient boost",
+                        : "Insufficient resources",
                     Data = "earth"
                 });
                 buildOptions.Add(new BuildModuleData { Cost = earthCost, CanAfford = canAffordEarth, Source = "Earth" });
 
                 // Option 2: Build from Space (uses space resources, faster)
-                string spaceCostStr = FormatModuleCostDetailed(spaceCost, faction);
-                int spaceDays = (int)spaceCost.completionTime_days;
+                string spaceCostStr = FormatModuleCostWithTime(spaceCost, faction);
                 string spaceLabel;
                 string spaceDetail;
 
                 if (usingBoostSubstitution)
                 {
                     spaceLabel = canAffordSpaceWithBoost
-                        ? $"From Space (boost substituted): {spaceCostStr}, {spaceDays} days"
-                        : $"From Space: {spaceCostStr}, {spaceDays} days (Cannot afford)";
+                        ? $"From Space (boost substituted): {spaceCostStr}"
+                        : $"From Space: {spaceCostStr} (Cannot afford)";
                     spaceDetail = canAffordSpaceWithBoost
                         ? "Using boost to substitute for missing space resources"
                         : "Insufficient space resources and boost";
@@ -664,8 +663,8 @@ namespace TISpeech.ReviewMode.Readers
                 else
                 {
                     spaceLabel = canAffordSpacePure
-                        ? $"From Space: {spaceCostStr}, {spaceDays} days"
-                        : $"From Space: {spaceCostStr}, {spaceDays} days (Cannot afford)";
+                        ? $"From Space: {spaceCostStr}"
+                        : $"From Space: {spaceCostStr} (Cannot afford)";
                     spaceDetail = canAffordSpacePure
                         ? "Build using local space resources"
                         : "Insufficient space resources";
@@ -760,49 +759,29 @@ namespace TISpeech.ReviewMode.Readers
         }
 
         /// <summary>
-        /// Format module cost with detailed breakdown showing player's current resources.
+        /// Format module cost using the game's built-in formatting, with completion time.
         /// </summary>
-        private string FormatModuleCostDetailed(TIResourcesCost cost, TIFactionState faction)
+        private string FormatModuleCostWithTime(TIResourcesCost cost, TIFactionState faction)
         {
-            var parts = new List<string>();
+            // Use the game's GetString method which properly formats all resources with sprites
+            // Parameters: format, includeCostStr, includeCompletionTime, completionTimeOnly, relevantCap, costsOnly, gainsOnly, faction
+            string gameFormatted = cost.GetString("Relevant", includeCostStr: false, includeCompletionTime: true,
+                completionTimeOnly: false, relevantCap: 7, costsOnly: false, gainsOnly: false, faction: faction);
 
-            // Check each resource type
-            AddCostPart(parts, cost, faction, FactionResource.Boost, "Boost");
-            AddCostPart(parts, cost, faction, FactionResource.Money, "Money");
-            AddCostPart(parts, cost, faction, FactionResource.Water, "Water");
-            AddCostPart(parts, cost, faction, FactionResource.Volatiles, "Volatiles");
-            AddCostPart(parts, cost, faction, FactionResource.Metals, "Metals");
-            AddCostPart(parts, cost, faction, FactionResource.NobleMetals, "Nobles");
-            AddCostPart(parts, cost, faction, FactionResource.Fissiles, "Fissiles");
-
-            if (parts.Count == 0)
-                return "Free";
-
-            return string.Join(", ", parts);
+            // Clean the text to convert sprites to readable labels
+            return TISpeechMod.CleanText(gameFormatted).Trim();
         }
 
         /// <summary>
-        /// Add a cost part showing required vs available.
+        /// Format module cost using the game's built-in formatting, without completion time.
         /// </summary>
-        private void AddCostPart(List<string> parts, TIResourcesCost cost, TIFactionState faction, FactionResource resource, string label)
+        private string FormatModuleCostOnly(TIResourcesCost cost, TIFactionState faction)
         {
-            float required = cost.GetSingleCostValue(resource);
-            if (required > 0.01f)
-            {
-                float available = faction.GetCurrentResourceAmount(resource);
-                string requiredStr = FormatResourceValue(required);
-                string availableStr = FormatResourceValue(available);
-                bool canAffordThis = available >= required;
+            // Use the game's ToString method which formats resources with sprites
+            string gameFormatted = cost.ToString("Relevant", gainsOnly: false, costsOnly: false, faction: faction);
 
-                if (canAffordThis)
-                {
-                    parts.Add($"{requiredStr} {label}");
-                }
-                else
-                {
-                    parts.Add($"{requiredStr} {label} (have {availableStr})");
-                }
-            }
+            // Clean the text to convert sprites to readable labels
+            return TISpeechMod.CleanText(gameFormatted).Trim();
         }
 
         /// <summary>
@@ -822,79 +801,40 @@ namespace TISpeech.ReviewMode.Readers
                 float earthBoost = earthCost.GetSingleCostValue(FactionResource.Boost);
                 float spaceBoost = spaceCost.GetSingleCostValue(FactionResource.Boost);
 
+                string costStr;
+                string source;
+
                 if (canAffordSpace && (!canAffordEarth || spaceBoost <= earthBoost))
                 {
-                    return FormatBriefCost(spaceCost, "Space");
+                    costStr = FormatModuleCostOnly(spaceCost, faction);
+                    source = "Space";
                 }
                 else if (canAffordEarth)
                 {
-                    return FormatBriefCost(earthCost, "Earth");
+                    costStr = FormatModuleCostOnly(earthCost, faction);
+                    source = "Earth";
                 }
                 else
                 {
                     // Can't afford either - show cheapest
                     if (spaceBoost < earthBoost || (spaceBoost == 0 && earthBoost > 0))
                     {
-                        return FormatBriefCost(spaceCost, "Space") + " (unaffordable)";
+                        costStr = FormatModuleCostOnly(spaceCost, faction) + " (unaffordable)";
+                        source = "Space";
                     }
                     else
                     {
-                        return FormatBriefCost(earthCost, "Earth") + " (unaffordable)";
+                        costStr = FormatModuleCostOnly(earthCost, faction) + " (unaffordable)";
+                        source = "Earth";
                     }
                 }
+
+                return $"{costStr} ({source})";
             }
             catch
             {
                 return "Cost unknown";
             }
-        }
-
-        /// <summary>
-        /// Format a brief cost string showing primary resource.
-        /// </summary>
-        private string FormatBriefCost(TIResourcesCost cost, string source)
-        {
-            var parts = new List<string>();
-
-            float boost = cost.GetSingleCostValue(FactionResource.Boost);
-            float money = cost.GetSingleCostValue(FactionResource.Money);
-            float water = cost.GetSingleCostValue(FactionResource.Water);
-            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
-            float metals = cost.GetSingleCostValue(FactionResource.Metals);
-            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
-            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
-
-            if (boost > 0) parts.Add($"{FormatResourceValue(boost)} Boost");
-            if (money > 0) parts.Add($"{FormatResourceValue(money)} $");
-
-            // For space resources, just show count if multiple
-            int spaceResourceCount = 0;
-            if (water > 0) spaceResourceCount++;
-            if (volatiles > 0) spaceResourceCount++;
-            if (metals > 0) spaceResourceCount++;
-            if (nobles > 0) spaceResourceCount++;
-            if (fissiles > 0) spaceResourceCount++;
-
-            if (spaceResourceCount > 0)
-            {
-                if (spaceResourceCount == 1)
-                {
-                    if (water > 0) parts.Add($"{FormatResourceValue(water)} Water");
-                    else if (volatiles > 0) parts.Add($"{FormatResourceValue(volatiles)} Vol");
-                    else if (metals > 0) parts.Add($"{FormatResourceValue(metals)} Met");
-                    else if (nobles > 0) parts.Add($"{FormatResourceValue(nobles)} Nob");
-                    else if (fissiles > 0) parts.Add($"{FormatResourceValue(fissiles)} Fis");
-                }
-                else
-                {
-                    parts.Add($"{spaceResourceCount} space res");
-                }
-            }
-
-            if (parts.Count == 0)
-                return "Free";
-
-            return string.Join(" + ", parts);
         }
 
         private ISection CreateResourcesSection(TIHabState hab)
@@ -1200,13 +1140,12 @@ namespace TISpeech.ReviewMode.Readers
                 if (template.incomeProjects > 0)
                     sb.AppendLine($"Projects: +{template.incomeProjects}");
 
-                // Cost
+                // Cost - use game's built-in formatting with completion time
                 var faction = hab?.coreFaction ?? GameControl.control?.activePlayer;
                 if (faction != null && hab != null)
                 {
                     var cost = template.MinimumBoostCostToday(faction, hab);
-                    sb.AppendLine($"Cost: {FormatModuleCost(cost)}");
-                    sb.AppendLine($"Build time: {(int)cost.completionTime_days} days");
+                    sb.AppendLine($"Cost: {FormatModuleCostWithTime(cost, faction)}");
                 }
             }
             catch { }
@@ -1224,67 +1163,6 @@ namespace TISpeech.ReviewMode.Readers
                 string sign = value > 0 ? "+" : "";
                 sb.AppendLine($"{label}: {sign}{value:F1}/month");
             }
-        }
-
-        /// <summary>
-        /// Format module cost for display.
-        /// </summary>
-        private string FormatModuleCost(TIResourcesCost cost)
-        {
-            var parts = new List<string>();
-
-            // Check for boost (Earth launch)
-            float boost = cost.GetSingleCostValue(FactionResource.Boost);
-            if (boost > 0)
-            {
-                parts.Add($"{FormatResourceValue(boost)} Boost");
-            }
-
-            // Check for money
-            float money = cost.GetSingleCostValue(FactionResource.Money);
-            if (money > 0)
-            {
-                parts.Add($"{FormatResourceValue(money)} Money");
-            }
-
-            // Check for space resources
-            float metals = cost.GetSingleCostValue(FactionResource.Metals);
-            if (metals > 0) parts.Add($"{FormatResourceValue(metals)} Metals");
-
-            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
-            if (volatiles > 0) parts.Add($"{FormatResourceValue(volatiles)} Volatiles");
-
-            float water = cost.GetSingleCostValue(FactionResource.Water);
-            if (water > 0) parts.Add($"{FormatResourceValue(water)} Water");
-
-            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
-            if (nobles > 0) parts.Add($"{FormatResourceValue(nobles)} Nobles");
-
-            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
-            if (fissiles > 0) parts.Add($"{FormatResourceValue(fissiles)} Fissiles");
-
-            if (parts.Count == 0)
-                return "Free";
-
-            return string.Join(", ", parts);
-        }
-
-        /// <summary>
-        /// Format a resource value similar to the game's FormatBigOrSmallNumber.
-        /// </summary>
-        private string FormatResourceValue(float value)
-        {
-            if (Math.Abs(value) >= 1000000000)
-                return $"{value / 1000000000:F1}B";
-            if (Math.Abs(value) >= 1000000)
-                return $"{value / 1000000:F1}M";
-            if (Math.Abs(value) >= 1000)
-                return $"{value / 1000:F1}K";
-            if (Math.Abs(value) >= 10)
-                return $"{value:F0}";
-            if (Math.Abs(value) >= 1)
-                return $"{value:F1}";
-            return $"{value:F2}";
         }
 
         #endregion
