@@ -862,6 +862,19 @@ namespace TISpeech.ReviewMode.Readers
             sb.AppendLine($"Category: {FormatCategory(tech.techCategory)}");
             sb.AppendLine($"Cost: {tech.researchCost:F0}");
 
+            // Summary description (same as shown when tech is in a slot)
+            try
+            {
+                string summary = tech.summary;
+                if (!string.IsNullOrEmpty(summary) && summary != "<skip/>")
+                {
+                    sb.AppendLine();
+                    sb.AppendLine(TISpeechMod.CleanText(summary));
+                    sb.AppendLine();
+                }
+            }
+            catch { }
+
             if (tech.endGameTech)
                 sb.AppendLine("End-game technology");
 
@@ -894,6 +907,19 @@ namespace TISpeech.ReviewMode.Readers
             sb.AppendLine(project.displayName);
             sb.AppendLine($"Category: {FormatCategory(project.techCategory)}");
             sb.AppendLine($"Cost: {project.GetResearchCost(faction):F0}");
+
+            // Summary description (same as shown when project is in a slot)
+            try
+            {
+                string summary = project.summary;
+                if (!string.IsNullOrEmpty(summary) && summary != "<skip/>")
+                {
+                    sb.AppendLine();
+                    sb.AppendLine(TISpeechMod.CleanText(summary));
+                    sb.AppendLine();
+                }
+            }
+            catch { }
 
             if (project.repeatable)
                 sb.AppendLine("Repeatable");
