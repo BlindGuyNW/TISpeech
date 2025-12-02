@@ -1683,8 +1683,9 @@ namespace TISpeech.ReviewMode
                 }
                 else
                 {
-                    // At section level, exit diplomacy
+                    // At section level, exit diplomacy and close the game window
                     TISpeechMod.Speak("Exiting diplomacy", interrupt: true);
+                    diplomacyMode.CloseDiplomacyWindow();
                     ExitDiplomacyMode();
                 }
                 return true;

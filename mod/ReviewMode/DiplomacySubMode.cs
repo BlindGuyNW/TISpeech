@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
@@ -1106,11 +1107,53 @@ namespace TISpeech.ReviewMode
             }
             else if (option.Label == "Cancel")
             {
-                // Signal to exit diplomacy mode
+                // Actually close the diplomacy window using the game's proper method
+                CloseDiplomacyWindow();
                 return "CANCEL_DIPLOMACY";
             }
 
             return option.Label;
+        }
+
+        /// <summary>
+        /// Close the diplomacy window by calling the NotificationScreenController's OnDiplomacyCloseButton method.
+        /// Uses reflection to access the private notificationController field.
+        /// </summary>
+        public void CloseDiplomacyWindow()
+        {
+            try
+            {
+                // Get the private notificationController field from DiplomacyController
+                var fieldInfo = typeof(DiplomacyController).GetField("notificationController",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (fieldInfo != null)
+                {
+                    var notificationController = fieldInfo.GetValue(controller) as NotificationScreenController;
+                    if (notificationController != null)
+                    {
+                        notificationController.OnDiplomacyCloseButton();
+                        MelonLogger.Msg("Closed diplomacy window via OnDiplomacyCloseButton");
+                        return;
+                    }
+                }
+
+                // Fallback: try to find NotificationScreenController and call OnDiplomacyCloseButton
+                var nsc = UnityEngine.Object.FindObjectOfType<NotificationScreenController>();
+                if (nsc != null)
+                {
+                    nsc.OnDiplomacyCloseButton();
+                    MelonLogger.Msg("Closed diplomacy window via FindObjectOfType");
+                }
+                else
+                {
+                    MelonLogger.Warning("Could not find NotificationScreenController to close diplomacy window");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error closing diplomacy window: {ex.Message}");
+            }
         }
 
         #endregion
