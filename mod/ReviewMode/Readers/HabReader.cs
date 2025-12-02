@@ -164,8 +164,9 @@ namespace TISpeech.ReviewMode.Readers
             sections.Add(CreateSectorsSection(hab));
 
             // Add Module action (if player owns this hab)
+            // Note: Don't check anyCoreCompleted - game allows building in non-core slots before core is done
             var faction = GameControl.control?.activePlayer;
-            if (faction != null && hab.coreFaction == faction && hab.anyCoreCompleted)
+            if (faction != null && hab.coreFaction == faction)
             {
                 var addModuleSection = CreateAddModuleSection(hab);
                 if (addModuleSection != null)
@@ -416,9 +417,16 @@ namespace TISpeech.ReviewMode.Readers
                         string tierStr = moduleTemplate.tier > 0 ? $"T{moduleTemplate.tier} " : "";
                         string powerStr = GetModuleTemplatePowerString(moduleTemplate);
                         string label = $"{tierStr}{moduleTemplate.displayName}";
+
+                        // Show brief cost summary (cheapest option)
+                        string costSummary = GetModuleCostSummary(moduleTemplate, hab, faction);
+                        string value = !string.IsNullOrEmpty(powerStr)
+                            ? $"{powerStr}, {costSummary}"
+                            : costSummary;
+
                         string detail = GetModuleTemplateDetailText(moduleTemplate, hab);
 
-                        section.AddItem(label, powerStr, detail, onActivate: () => StartBuildModule(habCopy, template));
+                        section.AddItem(label, value, detail, onActivate: () => StartBuildModule(habCopy, template));
                     }
                 }
 
@@ -588,7 +596,7 @@ namespace TISpeech.ReviewMode.Readers
         }
 
         /// <summary>
-        /// Confirm and execute module construction.
+        /// Confirm and execute module construction - shows Earth and Space cost options.
         /// </summary>
         private void ConfirmBuildModule(TIHabState hab, TIHabModuleTemplate moduleTemplate, TISectorState sector, int slotIndex)
         {
@@ -601,48 +609,96 @@ namespace TISpeech.ReviewMode.Readers
 
             try
             {
-                // Calculate cost - use MinimumBoostCostToday which picks the best cost option
-                var cost = moduleTemplate.MinimumBoostCostToday(faction, hab);
-                bool canAfford = cost.CanAfford(faction);
+                // Calculate both Earth and Space costs
+                var earthCost = moduleTemplate.CostFromEarth(faction, hab, isUpgrade: false);
+                var spaceCostPure = moduleTemplate.CostFromSpace(faction, hab, isUpgrade: false, substituteBoost: false);
+                var spaceCostWithBoost = moduleTemplate.CostFromSpace(faction, hab, isUpgrade: false, substituteBoost: true);
 
-                string costStr = FormatModuleCost(cost);
-                int days = (int)cost.completionTime_days;
+                bool canAffordEarth = earthCost.CanAfford(faction);
+                bool canAffordSpacePure = spaceCostPure.CanAfford(faction);
+                bool canAffordSpaceWithBoost = spaceCostWithBoost.CanAfford(faction);
+
+                // Determine which space cost to show - pure if affordable, otherwise with boost substitution
+                var spaceCost = canAffordSpacePure ? spaceCostPure : spaceCostWithBoost;
+                bool canAffordSpace = canAffordSpacePure || canAffordSpaceWithBoost;
+                bool usingBoostSubstitution = !canAffordSpacePure && canAffordSpaceWithBoost;
 
                 var options = new List<SelectionOption>();
-
-                string confirmLabel = canAfford
-                    ? $"Build {moduleTemplate.displayName} - {costStr}, {days} days"
-                    : $"Build {moduleTemplate.displayName} - {costStr}, {days} days (Cannot afford)";
-
-                options.Add(new SelectionOption
-                {
-                    Label = confirmLabel,
-                    DetailText = canAfford ? "Confirm construction" : "Insufficient resources",
-                    Data = new BuildModuleData { Cost = cost, CanAfford = canAfford }
-                });
-
-                options.Add(new SelectionOption
-                {
-                    Label = "Cancel",
-                    DetailText = "Cancel module construction",
-                    Data = null
-                });
+                var buildOptions = new List<BuildModuleData>();
 
                 int displayNum = TISectorState.sectorDisplayNum(sector.sectorNum, hab.habType);
                 string slotLabel = GetSlotLabel(hab, sector, slotIndex);
 
+                // Option 1: Build from Earth (uses boost, has transit time)
+                string earthCostStr = FormatModuleCostDetailed(earthCost, faction);
+                int earthDays = (int)earthCost.completionTime_days;
+                string earthLabel = canAffordEarth
+                    ? $"From Earth: {earthCostStr}, {earthDays} days"
+                    : $"From Earth: {earthCostStr}, {earthDays} days (Cannot afford)";
+
+                options.Add(new SelectionOption
+                {
+                    Label = earthLabel,
+                    DetailText = canAffordEarth
+                        ? "Ship module from Earth using boost"
+                        : "Insufficient boost",
+                    Data = "earth"
+                });
+                buildOptions.Add(new BuildModuleData { Cost = earthCost, CanAfford = canAffordEarth, Source = "Earth" });
+
+                // Option 2: Build from Space (uses space resources, faster)
+                string spaceCostStr = FormatModuleCostDetailed(spaceCost, faction);
+                int spaceDays = (int)spaceCost.completionTime_days;
+                string spaceLabel;
+                string spaceDetail;
+
+                if (usingBoostSubstitution)
+                {
+                    spaceLabel = canAffordSpaceWithBoost
+                        ? $"From Space (boost substituted): {spaceCostStr}, {spaceDays} days"
+                        : $"From Space: {spaceCostStr}, {spaceDays} days (Cannot afford)";
+                    spaceDetail = canAffordSpaceWithBoost
+                        ? "Using boost to substitute for missing space resources"
+                        : "Insufficient space resources and boost";
+                }
+                else
+                {
+                    spaceLabel = canAffordSpacePure
+                        ? $"From Space: {spaceCostStr}, {spaceDays} days"
+                        : $"From Space: {spaceCostStr}, {spaceDays} days (Cannot afford)";
+                    spaceDetail = canAffordSpacePure
+                        ? "Build using local space resources"
+                        : "Insufficient space resources";
+                }
+
+                options.Add(new SelectionOption
+                {
+                    Label = spaceLabel,
+                    DetailText = spaceDetail,
+                    Data = "space"
+                });
+                buildOptions.Add(new BuildModuleData { Cost = spaceCost, CanAfford = canAffordSpace, Source = "Space" });
+
+                // Option 3: Cancel
+                options.Add(new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Cancel module construction",
+                    Data = "cancel"
+                });
+
                 OnEnterSelectionMode($"Build {moduleTemplate.displayName} at Sector {displayNum}, {slotLabel}?", options, (index) =>
                 {
-                    if (index == 0)
+                    if (index >= 0 && index < buildOptions.Count)
                     {
-                        var data = options[0].Data as BuildModuleData;
-                        if (data != null && data.CanAfford)
+                        var data = buildOptions[index];
+                        if (data.CanAfford)
                         {
                             ExecuteBuildModule(hab, moduleTemplate, sector, slotIndex, data.Cost);
                         }
                         else
                         {
-                            OnSpeak?.Invoke("Cannot afford this module", true);
+                            OnSpeak?.Invoke($"Cannot afford to build from {data.Source}", true);
                         }
                     }
                     else
@@ -700,6 +756,145 @@ namespace TISpeech.ReviewMode.Readers
         {
             public TIResourcesCost Cost { get; set; }
             public bool CanAfford { get; set; }
+            public string Source { get; set; }
+        }
+
+        /// <summary>
+        /// Format module cost with detailed breakdown showing player's current resources.
+        /// </summary>
+        private string FormatModuleCostDetailed(TIResourcesCost cost, TIFactionState faction)
+        {
+            var parts = new List<string>();
+
+            // Check each resource type
+            AddCostPart(parts, cost, faction, FactionResource.Boost, "Boost");
+            AddCostPart(parts, cost, faction, FactionResource.Money, "Money");
+            AddCostPart(parts, cost, faction, FactionResource.Water, "Water");
+            AddCostPart(parts, cost, faction, FactionResource.Volatiles, "Volatiles");
+            AddCostPart(parts, cost, faction, FactionResource.Metals, "Metals");
+            AddCostPart(parts, cost, faction, FactionResource.NobleMetals, "Nobles");
+            AddCostPart(parts, cost, faction, FactionResource.Fissiles, "Fissiles");
+
+            if (parts.Count == 0)
+                return "Free";
+
+            return string.Join(", ", parts);
+        }
+
+        /// <summary>
+        /// Add a cost part showing required vs available.
+        /// </summary>
+        private void AddCostPart(List<string> parts, TIResourcesCost cost, TIFactionState faction, FactionResource resource, string label)
+        {
+            float required = cost.GetSingleCostValue(resource);
+            if (required > 0.01f)
+            {
+                float available = faction.GetCurrentResourceAmount(resource);
+                string requiredStr = FormatResourceValue(required);
+                string availableStr = FormatResourceValue(available);
+                bool canAffordThis = available >= required;
+
+                if (canAffordThis)
+                {
+                    parts.Add($"{requiredStr} {label}");
+                }
+                else
+                {
+                    parts.Add($"{requiredStr} {label} (have {availableStr})");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Get a brief cost summary for module listing (shows cheapest affordable option).
+        /// </summary>
+        private string GetModuleCostSummary(TIHabModuleTemplate template, TIHabState hab, TIFactionState faction)
+        {
+            try
+            {
+                var earthCost = template.CostFromEarth(faction, hab, isUpgrade: false);
+                var spaceCost = template.CostFromSpace(faction, hab, isUpgrade: false, substituteBoost: true);
+
+                bool canAffordEarth = earthCost.CanAfford(faction);
+                bool canAffordSpace = spaceCost.CanAfford(faction);
+
+                // Show the cheapest affordable option, or cheapest overall if can't afford either
+                float earthBoost = earthCost.GetSingleCostValue(FactionResource.Boost);
+                float spaceBoost = spaceCost.GetSingleCostValue(FactionResource.Boost);
+
+                if (canAffordSpace && (!canAffordEarth || spaceBoost <= earthBoost))
+                {
+                    return FormatBriefCost(spaceCost, "Space");
+                }
+                else if (canAffordEarth)
+                {
+                    return FormatBriefCost(earthCost, "Earth");
+                }
+                else
+                {
+                    // Can't afford either - show cheapest
+                    if (spaceBoost < earthBoost || (spaceBoost == 0 && earthBoost > 0))
+                    {
+                        return FormatBriefCost(spaceCost, "Space") + " (unaffordable)";
+                    }
+                    else
+                    {
+                        return FormatBriefCost(earthCost, "Earth") + " (unaffordable)";
+                    }
+                }
+            }
+            catch
+            {
+                return "Cost unknown";
+            }
+        }
+
+        /// <summary>
+        /// Format a brief cost string showing primary resource.
+        /// </summary>
+        private string FormatBriefCost(TIResourcesCost cost, string source)
+        {
+            var parts = new List<string>();
+
+            float boost = cost.GetSingleCostValue(FactionResource.Boost);
+            float money = cost.GetSingleCostValue(FactionResource.Money);
+            float water = cost.GetSingleCostValue(FactionResource.Water);
+            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
+            float metals = cost.GetSingleCostValue(FactionResource.Metals);
+            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
+            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
+
+            if (boost > 0) parts.Add($"{FormatResourceValue(boost)} Boost");
+            if (money > 0) parts.Add($"{FormatResourceValue(money)} $");
+
+            // For space resources, just show count if multiple
+            int spaceResourceCount = 0;
+            if (water > 0) spaceResourceCount++;
+            if (volatiles > 0) spaceResourceCount++;
+            if (metals > 0) spaceResourceCount++;
+            if (nobles > 0) spaceResourceCount++;
+            if (fissiles > 0) spaceResourceCount++;
+
+            if (spaceResourceCount > 0)
+            {
+                if (spaceResourceCount == 1)
+                {
+                    if (water > 0) parts.Add($"{FormatResourceValue(water)} Water");
+                    else if (volatiles > 0) parts.Add($"{FormatResourceValue(volatiles)} Vol");
+                    else if (metals > 0) parts.Add($"{FormatResourceValue(metals)} Met");
+                    else if (nobles > 0) parts.Add($"{FormatResourceValue(nobles)} Nob");
+                    else if (fissiles > 0) parts.Add($"{FormatResourceValue(fissiles)} Fis");
+                }
+                else
+                {
+                    parts.Add($"{spaceResourceCount} space res");
+                }
+            }
+
+            if (parts.Count == 0)
+                return "Free";
+
+            return string.Join(" + ", parts);
         }
 
         private ISection CreateResourcesSection(TIHabState hab)
