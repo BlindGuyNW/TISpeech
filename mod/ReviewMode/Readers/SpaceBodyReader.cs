@@ -509,7 +509,7 @@ namespace TISpeech.ReviewMode.Readers
 
                 // Get cost info
                 var costs = foundOp.ResourceCostOptions(faction, site, faction, checkCanAfford: false);
-                string costInfo = costs.Count > 0 ? FormatFoundingCost(costs[0]) : "Unknown cost";
+                string costInfo = costs.Count > 0 ? CostFormatter.FormatWithTime(costs[0], faction) : "Unknown cost";
 
                 // Build councilor selection options
                 var options = new List<SelectionOption>();
@@ -556,7 +556,7 @@ namespace TISpeech.ReviewMode.Readers
         }
 
         /// <summary>
-        /// Confirm and execute base founding.
+        /// Confirm and execute base founding. Shows Earth and Space options like HabReader.
         /// </summary>
         private void ConfirmFoundBase(TICouncilorState councilor, TIHabSiteState site, FoundOutpostOperation foundOp, List<TIResourcesCost> costs)
         {
@@ -569,53 +569,111 @@ namespace TISpeech.ReviewMode.Readers
 
             try
             {
-                if (costs == null || costs.Count == 0)
-                {
-                    OnSpeak?.Invoke("Cannot determine founding cost", true);
-                    return;
-                }
+                // Get the core module template for cost calculation
+                var coreModule = foundOp.CoreModule(faction.IsAlienFaction);
 
-                // Build cost options
+                // Calculate both Earth and Space costs explicitly
+                var earthCost = coreModule.CostFromEarth(faction, site, isUpgrade: false);
+                var spaceCostPure = coreModule.CostFromSpace(faction, site, isUpgrade: false, substituteBoost: false);
+                var spaceCostWithBoost = coreModule.CostFromSpace(faction, site, isUpgrade: false, substituteBoost: true);
+
+                bool canAffordEarth = earthCost.CanAfford(faction);
+                bool canAffordSpacePure = spaceCostPure.CanAfford(faction);
+                bool canAffordSpaceWithBoost = spaceCostWithBoost.CanAfford(faction);
+
+                // Determine which space cost to show
+                var spaceCost = canAffordSpacePure ? spaceCostPure : spaceCostWithBoost;
+                bool canAffordSpace = canAffordSpacePure || canAffordSpaceWithBoost;
+                bool usingBoostSubstitution = !canAffordSpacePure && canAffordSpaceWithBoost;
+
                 var options = new List<SelectionOption>();
+                var buildOptions = new List<CostOptionData>();
 
-                foreach (var cost in costs)
+                // First, show the base space resource cost (informational)
+                string baseSpaceCostStr = CostFormatter.FormatCostOnly(spaceCostPure, faction);
+                options.Add(new SelectionOption
                 {
-                    bool canAfford = cost.CanAfford(faction);
-                    string costStr = FormatFoundingCost(cost);
-                    int days = (int)cost.completionTime_days;
+                    Label = $"Base space cost: {baseSpaceCostStr}",
+                    DetailText = canAffordSpacePure
+                        ? "You have these resources - can found from space"
+                        : "You don't have these resources - will need boost substitution or found from Earth",
+                    Data = "info"
+                });
+                buildOptions.Add(new CostOptionData { Cost = null, CanAfford = false, Source = "Info" });
 
-                    string label = canAfford
-                        ? $"Found base - {costStr}, {days} days"
-                        : $"Found base - {costStr}, {days} days (Cannot afford)";
+                // Option 1: Found from Earth
+                string earthCostStr = CostFormatter.FormatWithTime(earthCost, faction);
+                string earthLabel = canAffordEarth
+                    ? $"From Earth: {earthCostStr}"
+                    : $"From Earth: {earthCostStr} (Cannot afford)";
 
-                    options.Add(new SelectionOption
-                    {
-                        Label = label,
-                        DetailText = $"Use {councilor.displayName} to found base at {site.displayName ?? "selected site"}",
-                        Data = new FoundingData { Cost = cost, CanAfford = canAfford }
-                    });
+                options.Add(new SelectionOption
+                {
+                    Label = earthLabel,
+                    DetailText = canAffordEarth
+                        ? $"Launch core module from Earth using {councilor.displayName}"
+                        : "Insufficient resources",
+                    Data = "earth"
+                });
+                buildOptions.Add(new CostOptionData { Cost = earthCost, CanAfford = canAffordEarth, Source = "Earth" });
+
+                // Option 2: Found from Space
+                string spaceCostStr = CostFormatter.FormatWithTime(spaceCost, faction);
+                string spaceLabel;
+                string spaceDetail;
+
+                if (usingBoostSubstitution)
+                {
+                    spaceLabel = canAffordSpaceWithBoost
+                        ? $"From Space (boost substituted): {spaceCostStr}"
+                        : $"From Space: {spaceCostStr} (Cannot afford)";
+                    spaceDetail = canAffordSpaceWithBoost
+                        ? $"Using boost to substitute for missing space resources via {councilor.displayName}"
+                        : "Insufficient space resources and boost";
+                }
+                else
+                {
+                    spaceLabel = canAffordSpacePure
+                        ? $"From Space: {spaceCostStr}"
+                        : $"From Space: {spaceCostStr} (Cannot afford)";
+                    spaceDetail = canAffordSpacePure
+                        ? $"Build using local space resources via {councilor.displayName}"
+                        : "Insufficient space resources";
                 }
 
                 options.Add(new SelectionOption
                 {
+                    Label = spaceLabel,
+                    DetailText = spaceDetail,
+                    Data = "space"
+                });
+                buildOptions.Add(new CostOptionData { Cost = spaceCost, CanAfford = canAffordSpace, Source = "Space" });
+
+                // Cancel option
+                options.Add(new SelectionOption
+                {
                     Label = "Cancel",
                     DetailText = "Cancel base founding",
-                    Data = null
+                    Data = "cancel"
                 });
 
                 string siteName = site.displayName ?? "selected site";
-                OnEnterSelectionMode($"Confirm founding base at {siteName}?", options, (index) =>
+                OnEnterSelectionMode($"Found base at {siteName}?", options, (index) =>
                 {
-                    if (index >= 0 && index < costs.Count)
+                    if (index >= 0 && index < buildOptions.Count)
                     {
-                        var data = options[index].Data as FoundingData;
-                        if (data != null && data.CanAfford)
+                        var data = buildOptions[index];
+                        if (data.Source == "Info")
+                        {
+                            OnSpeak?.Invoke($"Base space resources needed: {baseSpaceCostStr}. Select From Earth or From Space to found.", true);
+                        }
+                        else if (data.CanAfford)
                         {
                             ExecuteFoundBase(councilor, site, foundOp, data.Cost);
                         }
                         else
                         {
-                            OnSpeak?.Invoke("Cannot afford this founding option", true);
+                            OnSpeak?.Invoke($"Cannot afford to found from {data.Source}", true);
                         }
                     }
                     else
@@ -940,7 +998,7 @@ namespace TISpeech.ReviewMode.Readers
 
                 // Get cost info
                 var costs = foundOp.ResourceCostOptions(faction, orbit, faction, checkCanAfford: false);
-                string costInfo = costs.Count > 0 ? FormatFoundingCost(costs[0]) : "Unknown cost";
+                string costInfo = costs.Count > 0 ? CostFormatter.FormatWithTime(costs[0], faction) : "Unknown cost";
 
                 // Build councilor selection options
                 var options = new List<SelectionOption>();
@@ -999,52 +1057,110 @@ namespace TISpeech.ReviewMode.Readers
 
             try
             {
-                if (costs == null || costs.Count == 0)
-                {
-                    OnSpeak?.Invoke("Cannot determine founding cost", true);
-                    return;
-                }
+                // Get the core module template for cost calculation
+                var coreModule = foundOp.CoreModule(faction.IsAlienFaction);
 
-                // Build cost options
+                // Calculate both Earth and Space costs explicitly
+                var earthCost = coreModule.CostFromEarth(faction, orbit, isUpgrade: false);
+                var spaceCostPure = coreModule.CostFromSpace(faction, orbit, isUpgrade: false, substituteBoost: false);
+                var spaceCostWithBoost = coreModule.CostFromSpace(faction, orbit, isUpgrade: false, substituteBoost: true);
+
+                bool canAffordEarth = earthCost.CanAfford(faction);
+                bool canAffordSpacePure = spaceCostPure.CanAfford(faction);
+                bool canAffordSpaceWithBoost = spaceCostWithBoost.CanAfford(faction);
+
+                // Determine which space cost to show
+                var spaceCost = canAffordSpacePure ? spaceCostPure : spaceCostWithBoost;
+                bool canAffordSpace = canAffordSpacePure || canAffordSpaceWithBoost;
+                bool usingBoostSubstitution = !canAffordSpacePure && canAffordSpaceWithBoost;
+
                 var options = new List<SelectionOption>();
+                var buildOptions = new List<CostOptionData>();
 
-                foreach (var cost in costs)
+                // First, show the base space resource cost (informational)
+                string baseSpaceCostStr = CostFormatter.FormatCostOnly(spaceCostPure, faction);
+                options.Add(new SelectionOption
                 {
-                    bool canAfford = cost.CanAfford(faction);
-                    string costStr = FormatFoundingCost(cost);
-                    int days = (int)cost.completionTime_days;
+                    Label = $"Base space cost: {baseSpaceCostStr}",
+                    DetailText = canAffordSpacePure
+                        ? "You have these resources - can found from space"
+                        : "You don't have these resources - will need boost substitution or found from Earth",
+                    Data = "info"
+                });
+                buildOptions.Add(new CostOptionData { Cost = null, CanAfford = false, Source = "Info" });
 
-                    string label = canAfford
-                        ? $"Found station - {costStr}, {days} days"
-                        : $"Found station - {costStr}, {days} days (Cannot afford)";
+                // Option 1: Found from Earth
+                string earthCostStr = CostFormatter.FormatWithTime(earthCost, faction);
+                string earthLabel = canAffordEarth
+                    ? $"From Earth: {earthCostStr}"
+                    : $"From Earth: {earthCostStr} (Cannot afford)";
 
-                    options.Add(new SelectionOption
-                    {
-                        Label = label,
-                        DetailText = $"Use {councilor.displayName} to found station at {orbit.displayName}",
-                        Data = new FoundingData { Cost = cost, CanAfford = canAfford }
-                    });
+                options.Add(new SelectionOption
+                {
+                    Label = earthLabel,
+                    DetailText = canAffordEarth
+                        ? $"Launch core module from Earth using {councilor.displayName}"
+                        : "Insufficient resources",
+                    Data = "earth"
+                });
+                buildOptions.Add(new CostOptionData { Cost = earthCost, CanAfford = canAffordEarth, Source = "Earth" });
+
+                // Option 2: Found from Space
+                string spaceCostStr = CostFormatter.FormatWithTime(spaceCost, faction);
+                string spaceLabel;
+                string spaceDetail;
+
+                if (usingBoostSubstitution)
+                {
+                    spaceLabel = canAffordSpaceWithBoost
+                        ? $"From Space (boost substituted): {spaceCostStr}"
+                        : $"From Space: {spaceCostStr} (Cannot afford)";
+                    spaceDetail = canAffordSpaceWithBoost
+                        ? $"Using boost to substitute for missing space resources via {councilor.displayName}"
+                        : "Insufficient space resources and boost";
+                }
+                else
+                {
+                    spaceLabel = canAffordSpacePure
+                        ? $"From Space: {spaceCostStr}"
+                        : $"From Space: {spaceCostStr} (Cannot afford)";
+                    spaceDetail = canAffordSpacePure
+                        ? $"Build using local space resources via {councilor.displayName}"
+                        : "Insufficient space resources";
                 }
 
                 options.Add(new SelectionOption
                 {
+                    Label = spaceLabel,
+                    DetailText = spaceDetail,
+                    Data = "space"
+                });
+                buildOptions.Add(new CostOptionData { Cost = spaceCost, CanAfford = canAffordSpace, Source = "Space" });
+
+                // Cancel option
+                options.Add(new SelectionOption
+                {
                     Label = "Cancel",
                     DetailText = "Cancel station founding",
-                    Data = null
+                    Data = "cancel"
                 });
 
-                OnEnterSelectionMode($"Confirm founding station at {orbit.displayName}?", options, (index) =>
+                OnEnterSelectionMode($"Found station at {orbit.displayName}?", options, (index) =>
                 {
-                    if (index >= 0 && index < costs.Count)
+                    if (index >= 0 && index < buildOptions.Count)
                     {
-                        var data = options[index].Data as FoundingData;
-                        if (data != null && data.CanAfford)
+                        var data = buildOptions[index];
+                        if (data.Source == "Info")
+                        {
+                            OnSpeak?.Invoke($"Base space resources needed: {baseSpaceCostStr}. Select From Earth or From Space to found.", true);
+                        }
+                        else if (data.CanAfford)
                         {
                             ExecuteFoundStation(councilor, orbit, foundOp, data.Cost);
                         }
                         else
                         {
-                            OnSpeak?.Invoke("Cannot afford this founding option", true);
+                            OnSpeak?.Invoke($"Cannot afford to found from {data.Source}", true);
                         }
                     }
                     else
@@ -1374,42 +1490,8 @@ namespace TISpeech.ReviewMode.Readers
         /// </summary>
         private string FormatProbeCost(TIResourcesCost cost)
         {
-            var parts = new List<string>();
-
-            // Check for boost (Earth launch)
-            float boost = cost.GetSingleCostValue(FactionResource.Boost);
-            if (boost > 0)
-            {
-                parts.Add($"{FormatResourceValue(boost)} Boost");
-            }
-
-            // Check for money
-            float money = cost.GetSingleCostValue(FactionResource.Money);
-            if (money > 0)
-            {
-                parts.Add($"{FormatResourceValue(money)} Money");
-            }
-
-            // Check for space resources
-            float metals = cost.GetSingleCostValue(FactionResource.Metals);
-            if (metals > 0) parts.Add($"{FormatResourceValue(metals)} Metals");
-
-            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
-            if (volatiles > 0) parts.Add($"{FormatResourceValue(volatiles)} Volatiles");
-
-            float water = cost.GetSingleCostValue(FactionResource.Water);
-            if (water > 0) parts.Add($"{FormatResourceValue(water)} Water");
-
-            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
-            if (nobles > 0) parts.Add($"{FormatResourceValue(nobles)} Nobles");
-
-            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
-            if (fissiles > 0) parts.Add($"{FormatResourceValue(fissiles)} Fissiles");
-
-            if (parts.Count == 0)
-                return "Free";
-
-            return string.Join(", ", parts);
+            // Use shared CostFormatter for consistent formatting
+            return CostFormatter.FormatCostOnly(cost, GameControl.control?.activePlayer);
         }
 
         /// <summary>
@@ -1605,68 +1687,6 @@ namespace TISpeech.ReviewMode.Readers
         }
 
         /// <summary>
-        /// Format founding cost for display.
-        /// Uses game's own formatting style - raw numbers with K/M/B suffixes only for large values.
-        /// </summary>
-        private string FormatFoundingCost(TIResourcesCost cost)
-        {
-            var parts = new List<string>();
-
-            // Check for boost (Earth launch)
-            float boost = cost.GetSingleCostValue(FactionResource.Boost);
-            if (boost > 0)
-            {
-                parts.Add($"{FormatResourceValue(boost)} Boost");
-            }
-
-            // Check for money
-            float money = cost.GetSingleCostValue(FactionResource.Money);
-            if (money > 0)
-            {
-                parts.Add($"{FormatResourceValue(money)} Money");
-            }
-
-            // Check for space resources
-            float metals = cost.GetSingleCostValue(FactionResource.Metals);
-            if (metals > 0) parts.Add($"{FormatResourceValue(metals)} Metals");
-
-            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
-            if (volatiles > 0) parts.Add($"{FormatResourceValue(volatiles)} Volatiles");
-
-            float water = cost.GetSingleCostValue(FactionResource.Water);
-            if (water > 0) parts.Add($"{FormatResourceValue(water)} Water");
-
-            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
-            if (nobles > 0) parts.Add($"{FormatResourceValue(nobles)} Nobles");
-
-            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
-            if (fissiles > 0) parts.Add($"{FormatResourceValue(fissiles)} Fissiles");
-
-            if (parts.Count == 0)
-                return "Free";
-
-            return string.Join(", ", parts);
-        }
-
-        /// <summary>
-        /// Format a resource value similar to the game's FormatBigOrSmallNumber.
-        /// </summary>
-        private string FormatResourceValue(float value)
-        {
-            if (Math.Abs(value) >= 1000000000)
-                return $"{value / 1000000000:F1}B";
-            if (Math.Abs(value) >= 1000000)
-                return $"{value / 1000000:F1}M";
-            if (Math.Abs(value) >= 1000)
-                return $"{value / 1000:F1}K";
-            if (Math.Abs(value) >= 10)
-                return $"{value:F0}";
-            if (Math.Abs(value) >= 1)
-                return $"{value:F1}";
-            return $"{value:F2}";
-        }
-
-        /// <summary>
         /// Get the name of the tech required for a context (e.g., CanFoundTier1Station).
         /// </summary>
         private string GetRequiredTechForContext(Context context)
@@ -1698,15 +1718,6 @@ namespace TISpeech.ReviewMode.Readers
             {
                 return null;
             }
-        }
-
-        /// <summary>
-        /// Data class for founding operation selection.
-        /// </summary>
-        private class FoundingData
-        {
-            public TIResourcesCost Cost { get; set; }
-            public bool CanAfford { get; set; }
         }
 
         #endregion

@@ -624,14 +624,14 @@ namespace TISpeech.ReviewMode.Readers
                 bool usingBoostSubstitution = !canAffordSpacePure && canAffordSpaceWithBoost;
 
                 var options = new List<SelectionOption>();
-                var buildOptions = new List<BuildModuleData>();
+                var buildOptions = new List<CostOptionData>();
 
                 int displayNum = TISectorState.sectorDisplayNum(sector.sectorNum, hab.habType);
                 string slotLabel = GetSlotLabel(hab, sector, slotIndex);
 
                 // First, show the base space resource cost (like the game's tooltip does)
                 // This shows what space resources would be needed without boost substitution
-                string baseSpaceCostStr = FormatModuleCostOnly(spaceCostPure, faction);
+                string baseSpaceCostStr = CostFormatter.FormatCostOnly(spaceCostPure, faction);
                 options.Add(new SelectionOption
                 {
                     Label = $"Base space cost: {baseSpaceCostStr}",
@@ -641,11 +641,11 @@ namespace TISpeech.ReviewMode.Readers
                     Data = "info"
                 });
                 // This is informational only, not a build option
-                buildOptions.Add(new BuildModuleData { Cost = null, CanAfford = false, Source = "Info" });
+                buildOptions.Add(new CostOptionData { Cost = null, CanAfford = false, Source = "Info" });
 
                 // Option 1: Build from Earth (uses boost, has transit time)
                 // Game's GetString with includeCompletionTime will format like "10 Boost 50 Money 30 days"
-                string earthCostStr = FormatModuleCostWithTime(earthCost, faction);
+                string earthCostStr = CostFormatter.FormatWithTime(earthCost, faction);
                 string earthLabel = canAffordEarth
                     ? $"From Earth: {earthCostStr}"
                     : $"From Earth: {earthCostStr} (Cannot afford)";
@@ -658,10 +658,10 @@ namespace TISpeech.ReviewMode.Readers
                         : "Insufficient resources",
                     Data = "earth"
                 });
-                buildOptions.Add(new BuildModuleData { Cost = earthCost, CanAfford = canAffordEarth, Source = "Earth" });
+                buildOptions.Add(new CostOptionData { Cost = earthCost, CanAfford = canAffordEarth, Source = "Earth" });
 
                 // Option 2: Build from Space
-                string spaceCostStr = FormatModuleCostWithTime(spaceCost, faction);
+                string spaceCostStr = CostFormatter.FormatWithTime(spaceCost, faction);
                 string spaceLabel;
                 string spaceDetail;
 
@@ -691,7 +691,7 @@ namespace TISpeech.ReviewMode.Readers
                     DetailText = spaceDetail,
                     Data = "space"
                 });
-                buildOptions.Add(new BuildModuleData { Cost = spaceCost, CanAfford = canAffordSpace, Source = "Space" });
+                buildOptions.Add(new CostOptionData { Cost = spaceCost, CanAfford = canAffordSpace, Source = "Space" });
 
                 // Option 3: Cancel
                 options.Add(new SelectionOption
@@ -769,42 +769,6 @@ namespace TISpeech.ReviewMode.Readers
         }
 
         /// <summary>
-        /// Data class for build module confirmation.
-        /// </summary>
-        private class BuildModuleData
-        {
-            public TIResourcesCost Cost { get; set; }
-            public bool CanAfford { get; set; }
-            public string Source { get; set; }
-        }
-
-        /// <summary>
-        /// Format module cost using the game's built-in formatting, with completion time.
-        /// </summary>
-        private string FormatModuleCostWithTime(TIResourcesCost cost, TIFactionState faction)
-        {
-            // Use the game's GetString method which properly formats all resources with sprites
-            // Parameters: format, includeCostStr, includeCompletionTime, completionTimeOnly, relevantCap, costsOnly, gainsOnly, faction
-            string gameFormatted = cost.GetString("Relevant", includeCostStr: false, includeCompletionTime: true,
-                completionTimeOnly: false, relevantCap: 7, costsOnly: false, gainsOnly: false, faction: faction);
-
-            // Clean the text to convert sprites to readable labels
-            return TISpeechMod.CleanText(gameFormatted).Trim();
-        }
-
-        /// <summary>
-        /// Format module cost using the game's built-in formatting, without completion time.
-        /// </summary>
-        private string FormatModuleCostOnly(TIResourcesCost cost, TIFactionState faction)
-        {
-            // Use the game's ToString method which formats resources with sprites
-            string gameFormatted = cost.ToString("Relevant", gainsOnly: false, costsOnly: false, faction: faction);
-
-            // Clean the text to convert sprites to readable labels
-            return TISpeechMod.CleanText(gameFormatted).Trim();
-        }
-
-        /// <summary>
         /// Get a brief cost summary for module listing (shows cheapest affordable option).
         /// </summary>
         private string GetModuleCostSummary(TIHabModuleTemplate template, TIHabState hab, TIFactionState faction)
@@ -826,12 +790,12 @@ namespace TISpeech.ReviewMode.Readers
 
                 if (canAffordSpace && (!canAffordEarth || spaceBoost <= earthBoost))
                 {
-                    costStr = FormatModuleCostOnly(spaceCost, faction);
+                    costStr = CostFormatter.FormatCostOnly(spaceCost, faction);
                     source = "Space";
                 }
                 else if (canAffordEarth)
                 {
-                    costStr = FormatModuleCostOnly(earthCost, faction);
+                    costStr = CostFormatter.FormatCostOnly(earthCost, faction);
                     source = "Earth";
                 }
                 else
@@ -839,12 +803,12 @@ namespace TISpeech.ReviewMode.Readers
                     // Can't afford either - show cheapest
                     if (spaceBoost < earthBoost || (spaceBoost == 0 && earthBoost > 0))
                     {
-                        costStr = FormatModuleCostOnly(spaceCost, faction) + " (unaffordable)";
+                        costStr = CostFormatter.FormatCostOnly(spaceCost, faction) + " (unaffordable)";
                         source = "Space";
                     }
                     else
                     {
-                        costStr = FormatModuleCostOnly(earthCost, faction) + " (unaffordable)";
+                        costStr = CostFormatter.FormatCostOnly(earthCost, faction) + " (unaffordable)";
                         source = "Earth";
                     }
                 }
@@ -1165,7 +1129,7 @@ namespace TISpeech.ReviewMode.Readers
                 if (faction != null && hab != null)
                 {
                     var cost = template.MinimumBoostCostToday(faction, hab);
-                    sb.AppendLine($"Cost: {FormatModuleCostWithTime(cost, faction)}");
+                    sb.AppendLine($"Cost: {CostFormatter.FormatWithTime(cost, faction)}");
                 }
             }
             catch { }
