@@ -629,6 +629,20 @@ namespace TISpeech.ReviewMode.Readers
                 int displayNum = TISectorState.sectorDisplayNum(sector.sectorNum, hab.habType);
                 string slotLabel = GetSlotLabel(hab, sector, slotIndex);
 
+                // First, show the base space resource cost (like the game's tooltip does)
+                // This shows what space resources would be needed without boost substitution
+                string baseSpaceCostStr = FormatModuleCostOnly(spaceCostPure, faction);
+                options.Add(new SelectionOption
+                {
+                    Label = $"Base space cost: {baseSpaceCostStr}",
+                    DetailText = canAffordSpacePure
+                        ? "You have these resources - can build from space"
+                        : "You don't have these resources - will need boost substitution or build from Earth",
+                    Data = "info"
+                });
+                // This is informational only, not a build option
+                buildOptions.Add(new BuildModuleData { Cost = null, CanAfford = false, Source = "Info" });
+
                 // Option 1: Build from Earth (uses boost, has transit time)
                 // Game's GetString with includeCompletionTime will format like "10 Boost 50 Money 30 days"
                 string earthCostStr = FormatModuleCostWithTime(earthCost, faction);
@@ -646,18 +660,19 @@ namespace TISpeech.ReviewMode.Readers
                 });
                 buildOptions.Add(new BuildModuleData { Cost = earthCost, CanAfford = canAffordEarth, Source = "Earth" });
 
-                // Option 2: Build from Space (uses space resources, faster)
+                // Option 2: Build from Space
                 string spaceCostStr = FormatModuleCostWithTime(spaceCost, faction);
                 string spaceLabel;
                 string spaceDetail;
 
                 if (usingBoostSubstitution)
                 {
+                    // Show what the boost-substituted cost is
                     spaceLabel = canAffordSpaceWithBoost
                         ? $"From Space (boost substituted): {spaceCostStr}"
                         : $"From Space: {spaceCostStr} (Cannot afford)";
                     spaceDetail = canAffordSpaceWithBoost
-                        ? "Using boost to substitute for missing space resources"
+                        ? $"Using boost to substitute for missing space resources"
                         : "Insufficient space resources and boost";
                 }
                 else
@@ -691,7 +706,12 @@ namespace TISpeech.ReviewMode.Readers
                     if (index >= 0 && index < buildOptions.Count)
                     {
                         var data = buildOptions[index];
-                        if (data.CanAfford)
+                        if (data.Source == "Info")
+                        {
+                            // Informational item - just speak it, don't build
+                            OnSpeak?.Invoke($"Base space resources needed: {baseSpaceCostStr}. Select From Earth or From Space to build.", true);
+                        }
+                        else if (data.CanAfford)
                         {
                             ExecuteBuildModule(hab, moduleTemplate, sector, slotIndex, data.Cost);
                         }
