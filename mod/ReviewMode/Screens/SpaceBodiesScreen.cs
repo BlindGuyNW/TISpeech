@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
+using TISpeech.ReviewMode;
 using TISpeech.ReviewMode.Readers;
 using TISpeech.ReviewMode.Sections;
 
@@ -691,33 +692,7 @@ namespace TISpeech.ReviewMode.Screens
         /// </summary>
         private string FormatProbeCost(TIResourcesCost cost)
         {
-            var parts = new List<string>();
-
-            float boost = cost.GetSingleCostValue(FactionResource.Boost);
-            if (boost > 0) parts.Add($"{boost:F1} Boost");
-
-            float money = cost.GetSingleCostValue(FactionResource.Money);
-            if (money > 0) parts.Add($"${money:F0}M");
-
-            float metals = cost.GetSingleCostValue(FactionResource.Metals);
-            if (metals > 0) parts.Add($"{metals:F1} Metals");
-
-            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
-            if (volatiles > 0) parts.Add($"{volatiles:F1} Volatiles");
-
-            float water = cost.GetSingleCostValue(FactionResource.Water);
-            if (water > 0) parts.Add($"{water:F1} Water");
-
-            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
-            if (nobles > 0) parts.Add($"{nobles:F1} Nobles");
-
-            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
-            if (fissiles > 0) parts.Add($"{fissiles:F1} Fissiles");
-
-            if (parts.Count == 0)
-                return "Free";
-
-            return string.Join(", ", parts);
+            return CostFormatter.FormatCostOnly(cost, GameControl.control?.activePlayer);
         }
 
         #endregion

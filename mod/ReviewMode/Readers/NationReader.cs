@@ -7,6 +7,9 @@ using PavonisInteractive.TerraInvicta;
 using PavonisInteractive.TerraInvicta.Actions;
 using TISpeech.ReviewMode.Sections;
 
+// For CostFormatter
+using TISpeech.ReviewMode;
+
 // Alias for the nested enum to avoid ambiguity
 using TrackedValue = PavonisInteractive.TerraInvicta.NationInfoController.TrackedValue;
 
@@ -573,7 +576,7 @@ namespace TISpeech.ReviewMode.Readers
                     {
                         // Get cost per IP
                         var costPerIP = nation.InvestmentPointDirectPurchasePrice(priority, faction);
-                        string costStr = FormatResourceCost(costPerIP);
+                        string costStr = CostFormatter.FormatCostOnly(costPerIP, faction);
 
                         string priorityName = GetPriorityDisplayName(priority);
                         string label = priorityName;
@@ -606,24 +609,6 @@ namespace TISpeech.ReviewMode.Readers
             return section;
         }
 
-        private string FormatResourceCost(TIResourcesCost cost)
-        {
-            var parts = new List<string>();
-
-            float money = cost.GetSingleCostValue(FactionResource.Money);
-            float influence = cost.GetSingleCostValue(FactionResource.Influence);
-            float operations = cost.GetSingleCostValue(FactionResource.Operations);
-
-            if (money > 0)
-                parts.Add($"${FormatLargeNumber(money)}");
-            if (influence > 0)
-                parts.Add($"{influence:F0} Inf");
-            if (operations > 0)
-                parts.Add($"{operations:F0} Ops");
-
-            return parts.Count > 0 ? string.Join(", ", parts) : "Free";
-        }
-
         private void StartDirectInvestment(TINationState nation, TIFactionState faction, PriorityType priority, TIResourcesCost costPerIP, int maxAllowed)
         {
             string priorityName = GetPriorityDisplayName(priority);
@@ -644,7 +629,7 @@ namespace TISpeech.ReviewMode.Readers
             foreach (int amount in amounts.Distinct().Where(a => a <= affordable).OrderBy(a => a))
             {
                 var totalCost = nation.SingleDirectInvestmentPrice(priority, amount, faction);
-                string costStr = FormatResourceCost(totalCost);
+                string costStr = CostFormatter.FormatCostOnly(totalCost, faction);
                 string label = amount == affordable ? $"{amount} IP (max)" : $"{amount} IP";
 
                 options.Add(new SelectionOption

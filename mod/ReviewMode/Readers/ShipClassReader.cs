@@ -7,6 +7,9 @@ using PavonisInteractive.TerraInvicta;
 using PavonisInteractive.TerraInvicta.Actions;
 using TISpeech.ReviewMode.Sections;
 
+// For CostFormatter
+using TISpeech.ReviewMode;
+
 namespace TISpeech.ReviewMode.Readers
 {
     /// <summary>
@@ -645,56 +648,7 @@ namespace TISpeech.ReviewMode.Readers
 
         private string FormatCost(TIResourcesCost cost)
         {
-            if (cost == null)
-                return "Unknown";
-
-            var parts = new List<string>();
-
-            float money = cost.GetSingleCostValue(FactionResource.Money);
-            if (money > 0)
-                parts.Add($"{money:N0} Money");
-
-            float influence = cost.GetSingleCostValue(FactionResource.Influence);
-            if (influence > 0)
-                parts.Add($"{influence:N0} Influence");
-
-            float ops = cost.GetSingleCostValue(FactionResource.Operations);
-            if (ops > 0)
-                parts.Add($"{ops:N0} Ops");
-
-            float boost = cost.GetSingleCostValue(FactionResource.Boost);
-            if (boost > 0)
-                parts.Add($"{boost:N0} Boost");
-
-            float water = cost.GetSingleCostValue(FactionResource.Water);
-            if (water > 0)
-                parts.Add($"{water:N0} Water");
-
-            float volatiles = cost.GetSingleCostValue(FactionResource.Volatiles);
-            if (volatiles > 0)
-                parts.Add($"{volatiles:N0} Volatiles");
-
-            float metals = cost.GetSingleCostValue(FactionResource.Metals);
-            if (metals > 0)
-                parts.Add($"{metals:N0} Metals");
-
-            float nobles = cost.GetSingleCostValue(FactionResource.NobleMetals);
-            if (nobles > 0)
-                parts.Add($"{nobles:N0} Noble Metals");
-
-            float fissiles = cost.GetSingleCostValue(FactionResource.Fissiles);
-            if (fissiles > 0)
-                parts.Add($"{fissiles:N0} Fissiles");
-
-            float exotics = cost.GetSingleCostValue(FactionResource.Exotics);
-            if (exotics > 0)
-                parts.Add($"{exotics:N0} Exotics");
-
-            float antimatter = cost.GetSingleCostValue(FactionResource.Antimatter);
-            if (antimatter > 0)
-                parts.Add($"{antimatter:N0} Antimatter");
-
-            return parts.Count > 0 ? string.Join(", ", parts) : "Free";
+            return CostFormatter.FormatCostOnly(cost, GameControl.control?.activePlayer);
         }
 
         private List<TIHabModuleState> GetAvailableShipyards(TIFactionState faction, TISpaceShipTemplate design)
