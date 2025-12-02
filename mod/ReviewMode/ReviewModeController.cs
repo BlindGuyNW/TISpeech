@@ -150,6 +150,7 @@ namespace TISpeech.ReviewMode
             nationScreen = new NationScreen();
             nationScreen.OnEnterSelectionMode = EnterSelectionMode;
             nationScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            nationScreen.OnSectionsInvalidated = () => navigation.RefreshSections();
 
             orgMarketScreen = new OrgMarketScreen();
             orgMarketScreen.OnEnterSelectionMode = EnterSelectionMode;

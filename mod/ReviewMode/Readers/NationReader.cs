@@ -33,6 +33,11 @@ namespace TISpeech.ReviewMode.Readers
         /// </summary>
         public Action<string, List<SelectionOption>, Action<int>> OnEnterSelectionMode { get; set; }
 
+        /// <summary>
+        /// Callback when sections need to be refreshed after an action.
+        /// </summary>
+        public Action OnRefreshNeeded { get; set; }
+
         public string ReadSummary(TINationState nation)
         {
             if (nation == null)
@@ -125,6 +130,9 @@ namespace TISpeech.ReviewMode.Readers
                 if (yourCPs != null && yourCPs.Count > 0)
                 {
                     sections.Add(CreateControlPointsSection(nation, yourCPs, faction));
+
+                    // Control Point Actions section - abandon, auto-abandon toggle
+                    sections.Add(CreateControlPointActionsSection(nation, yourCPs, faction));
                 }
             }
 
@@ -146,8 +154,20 @@ namespace TISpeech.ReviewMode.Readers
                 sections.Add(CreateNuclearSection(nation, faction));
             }
 
-            // Relations section
+            // Direct Investment section - if player has any presence
+            if (faction != null && nation.MaxDirectInvestIPsRemainingThisYear() > 0)
+            {
+                sections.Add(CreateDirectInvestmentSection(nation, faction));
+            }
+
+            // Relations section (read-only summary)
             sections.Add(CreateRelationsSection(nation));
+
+            // Manage Relations section - if player controls executive
+            if (faction != null && nation.executiveFaction == faction)
+            {
+                sections.Add(CreateManageRelationsSection(nation, faction));
+            }
 
             // Claims section - territorial claims and unification status
             sections.Add(CreateClaimsSection(nation));
@@ -380,6 +400,495 @@ namespace TISpeech.ReviewMode.Readers
 
             return section;
         }
+
+        private ISection CreateControlPointActionsSection(TINationState nation, List<TIControlPoint> yourCPs, TIFactionState faction)
+        {
+            var section = new DataSection("Control Point Actions");
+
+            // Get current status
+            bool canDisable = nation.CanDisableControlPoints(faction);
+            bool autoAbandonEnabled = faction.permaAbandonedNations?.Contains(nation) ?? false;
+            int activeCount = yourCPs.Count(cp => !cp.benefitsDisabled);
+            int disabledCount = yourCPs.Count(cp => cp.benefitsDisabled);
+
+            // Get duration from game config
+            int disableDuration = TemplateManager.global?.selfDisableControlPointDuration_months ?? 6;
+
+            // Status summary
+            string statusValue = $"{activeCount} active, {disabledCount} disabled";
+            section.AddItem("Status", statusValue);
+
+            // Abandon Control Points action
+            if (canDisable)
+            {
+                string abandonLabel = "Abandon Control Points";
+                string abandonValue = $"Disable for {disableDuration} months";
+                string abandonDetail = $"Voluntarily disable your control points in {nation.displayName}. " +
+                    $"This will disable all {activeCount} of your active control points for {disableDuration} months. " +
+                    "Use this to withdraw from a nation without losing control points to enemy factions. " +
+                    "During this time, you won't receive benefits from these control points.";
+
+                section.AddItem(abandonLabel, abandonValue, abandonDetail,
+                    onActivate: () => StartAbandonControlPoints(nation, faction, disableDuration));
+            }
+            else
+            {
+                string reason = disabledCount > 0
+                    ? "All control points are already disabled"
+                    : "No control points to disable";
+                section.AddItem("Abandon Control Points", reason);
+            }
+
+            // Auto-Abandon Toggle
+            string autoLabel = "Auto-Abandon";
+            string autoValue = autoAbandonEnabled ? "Enabled" : "Disabled";
+            string autoDetail = autoAbandonEnabled
+                ? $"Auto-abandon is ENABLED for {nation.displayName}. " +
+                  "Your control points will be automatically abandoned if an enemy faction takes the executive. " +
+                  "This prevents you from losing control points to hostile takeovers."
+                : $"Auto-abandon is DISABLED for {nation.displayName}. " +
+                  "Your control points will remain active even if an enemy faction takes the executive. " +
+                  "Enable this to automatically protect your control points from hostile takeovers.";
+
+            section.AddItem(autoLabel, autoValue, autoDetail,
+                onActivate: () => ToggleAutoAbandon(nation, faction, !autoAbandonEnabled));
+
+            return section;
+        }
+
+        private void StartAbandonControlPoints(TINationState nation, TIFactionState faction, int durationMonths)
+        {
+            // Double confirmation for abandon action
+            var confirmOptions = new List<SelectionOption>
+            {
+                new SelectionOption
+                {
+                    Label = "Confirm Abandon",
+                    DetailText = $"Disable all control points in {nation.displayName} for {durationMonths} months",
+                    Data = true
+                },
+                new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Keep control points active",
+                    Data = false
+                }
+            };
+
+            OnEnterSelectionMode?.Invoke(
+                $"Abandon control points in {nation.displayName}?",
+                confirmOptions,
+                (index) =>
+                {
+                    if ((bool)confirmOptions[index].Data)
+                    {
+                        ExecuteAbandonControlPoints(nation, faction, durationMonths);
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Abandon cancelled", true);
+                    }
+                }
+            );
+        }
+
+        private void ExecuteAbandonControlPoints(TINationState nation, TIFactionState faction, int durationMonths)
+        {
+            try
+            {
+                var action = new SelfDisableControlPoints(faction, nation);
+                faction.playerControl.StartAction(action);
+
+                OnSpeak?.Invoke($"Control points in {nation.displayName} abandoned for {durationMonths} months", true);
+                MelonLogger.Msg($"Abandoned control points in {nation.displayName}");
+
+                // Refresh sections to show updated status
+                OnRefreshNeeded?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error abandoning control points: {ex.Message}");
+                OnSpeak?.Invoke("Error abandoning control points", true);
+            }
+        }
+
+        private void ToggleAutoAbandon(TINationState nation, TIFactionState faction, bool newValue)
+        {
+            try
+            {
+                var action = new SetNationAutoAbandon(faction, nation, newValue);
+                faction.playerControl.StartAction(action);
+
+                string status = newValue ? "enabled" : "disabled";
+                OnSpeak?.Invoke($"Auto-abandon {status} for {nation.displayName}", true);
+                MelonLogger.Msg($"Auto-abandon {status} for {nation.displayName}");
+
+                // Refresh sections to show updated status
+                OnRefreshNeeded?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error toggling auto-abandon: {ex.Message}");
+                OnSpeak?.Invoke("Error toggling auto-abandon", true);
+            }
+        }
+
+        #region Direct Investment
+
+        private ISection CreateDirectInvestmentSection(TINationState nation, TIFactionState faction)
+        {
+            var section = new DataSection("Direct Investment");
+
+            try
+            {
+                int remainingThisYear = nation.MaxDirectInvestIPsRemainingThisYear();
+                int maxAnnual = nation.MaxAnnualDirectInvestIPs;
+                float usedThisYear = nation.directInvestmentedIPsThisYear;
+
+                // Summary of remaining capacity
+                section.AddItem("Annual Limit", $"{remainingThisYear} of {maxAnnual} IPs remaining this year",
+                    $"You can directly invest up to {maxAnnual} Investment Points per year in {nation.displayName}. " +
+                    $"You have used {usedThisYear:F0} IPs so far this year.");
+
+                // Check for free influence period
+                if (nation.SkipDirectInvestInfluenceCost(faction))
+                {
+                    section.AddItem("Regime Change Bonus", "Reduced influence costs active",
+                        "You recently took control of the executive. Influence costs for direct investment are reduced by 50%.");
+                }
+
+                // List available priorities for direct investment
+                foreach (PriorityType priority in Enum.GetValues(typeof(PriorityType)))
+                {
+                    if (priority == PriorityType.None || priority == PriorityType.Spoils)
+                        continue;
+
+                    if (!TINationState.EverAllowedForDirectInvest(priority))
+                        continue;
+
+                    if (!nation.ValidPriority(priority))
+                        continue;
+
+                    if (nation.CanDirectInvest(faction, priority, out int maxAllowed))
+                    {
+                        // Get cost per IP
+                        var costPerIP = nation.InvestmentPointDirectPurchasePrice(priority, faction);
+                        string costStr = FormatResourceCost(costPerIP);
+
+                        string priorityName = GetPriorityDisplayName(priority);
+                        string label = priorityName;
+                        string value = $"Cost: {costStr}/IP, max {maxAllowed}";
+
+                        // Get current progress if applicable
+                        float accumulated = nation.GetAccumulatedInvestmentPoints(priority);
+                        float required = nation.GetRequiredInvestmentPointsForPriority(priority);
+                        string progressStr = "";
+                        if (required > 0)
+                        {
+                            float percent = (accumulated / required) * 100f;
+                            progressStr = $"Progress: {percent:F0}% ({accumulated:F1}/{required:F0} IP). ";
+                        }
+
+                        string detail = $"{progressStr}Cost per Investment Point: {costStr}. " +
+                            $"Maximum you can invest: {maxAllowed} IP.";
+
+                        section.AddItem(label, value, detail,
+                            onActivate: () => StartDirectInvestment(nation, faction, priority, costPerIP, maxAllowed));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error building direct investment section: {ex.Message}");
+                section.AddItem("Error loading direct investment data");
+            }
+
+            return section;
+        }
+
+        private string FormatResourceCost(TIResourcesCost cost)
+        {
+            var parts = new List<string>();
+
+            float money = cost.GetSingleCostValue(FactionResource.Money);
+            float influence = cost.GetSingleCostValue(FactionResource.Influence);
+            float operations = cost.GetSingleCostValue(FactionResource.Operations);
+
+            if (money > 0)
+                parts.Add($"${FormatLargeNumber(money)}");
+            if (influence > 0)
+                parts.Add($"{influence:F0} Inf");
+            if (operations > 0)
+                parts.Add($"{operations:F0} Ops");
+
+            return parts.Count > 0 ? string.Join(", ", parts) : "Free";
+        }
+
+        private void StartDirectInvestment(TINationState nation, TIFactionState faction, PriorityType priority, TIResourcesCost costPerIP, int maxAllowed)
+        {
+            string priorityName = GetPriorityDisplayName(priority);
+
+            // Calculate how many IPs the player can afford
+            int affordable = CalculateAffordableIPs(faction, costPerIP, maxAllowed);
+
+            if (affordable <= 0)
+            {
+                OnSpeak?.Invoke("Cannot afford to invest in this priority", true);
+                return;
+            }
+
+            // Create options for 1, 5, 10, max IPs
+            var options = new List<SelectionOption>();
+
+            int[] amounts = { 1, 5, 10, affordable };
+            foreach (int amount in amounts.Distinct().Where(a => a <= affordable).OrderBy(a => a))
+            {
+                var totalCost = nation.SingleDirectInvestmentPrice(priority, amount, faction);
+                string costStr = FormatResourceCost(totalCost);
+                string label = amount == affordable ? $"{amount} IP (max)" : $"{amount} IP";
+
+                options.Add(new SelectionOption
+                {
+                    Label = label,
+                    DetailText = $"Invest {amount} IP for {costStr}",
+                    Data = amount
+                });
+            }
+
+            OnEnterSelectionMode?.Invoke(
+                $"Invest in {priorityName}",
+                options,
+                (index) => ExecuteDirectInvestment(nation, faction, priority, (int)options[index].Data)
+            );
+        }
+
+        private int CalculateAffordableIPs(TIFactionState faction, TIResourcesCost costPerIP, int maxAllowed)
+        {
+            // Find how many IPs we can afford
+            for (int i = maxAllowed; i >= 1; i--)
+            {
+                var totalCost = new TIResourcesCost(costPerIP).MultiplyCost(i);
+                if (totalCost.CanAfford(faction))
+                    return i;
+            }
+            return 0;
+        }
+
+        private void ExecuteDirectInvestment(TINationState nation, TIFactionState faction, PriorityType priority, int amount)
+        {
+            try
+            {
+                var action = new DirectInvestAction(faction, nation, priority, amount);
+                faction.playerControl.StartAction(action);
+
+                string priorityName = GetPriorityDisplayName(priority);
+                OnSpeak?.Invoke($"Invested {amount} IP in {priorityName}", true);
+                MelonLogger.Msg($"Direct invested {amount} IP in {priorityName} for {nation.displayName}");
+
+                // Refresh sections to show updated status
+                OnRefreshNeeded?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing direct investment: {ex.Message}");
+                OnSpeak?.Invoke("Error executing direct investment", true);
+            }
+        }
+
+        #endregion
+
+        #region Manage Relations
+
+        private ISection CreateManageRelationsSection(TINationState nation, TIFactionState faction)
+        {
+            var section = new DataSection("Manage Relations");
+
+            try
+            {
+                // Get the influence cost for relationship changes
+                float influenceCost = TIFactionState.setPolicyMission?.cost?.value ?? 25f;
+
+                section.AddItem("Relationship Cost", $"{influenceCost:F0} Influence per change",
+                    "Changing a diplomatic relationship costs Influence. You can form alliances, create rivalries, or end existing relationships.");
+
+                // Get all nations we could potentially have relationships with
+                var allNations = GameStateManager.AllExtantNations()
+                    ?.Where(n => n != nation)
+                    .OrderBy(n => n.displayName)
+                    .ToList() ?? new List<TINationState>();
+
+                // Current allies - can end alliance
+                var currentAllies = nation.allies?.Where(n => n != null).ToList() ?? new List<TINationState>();
+                if (currentAllies.Count > 0)
+                {
+                    section.AddItem("--- Current Allies ---", $"{currentAllies.Count} allies");
+                    foreach (var ally in currentAllies.OrderBy(n => n.displayName))
+                    {
+                        bool canEnd = nation.CanEndAlliance(ally);
+                        string status = canEnd ? "can end alliance" : "cannot end alliance";
+                        section.AddItem(ally.displayName, $"Ally, {status}",
+                            $"Alliance with {ally.displayName}. " + (canEnd
+                                ? $"Ending this alliance will cost {influenceCost:F0} Influence."
+                                : "Cannot end this alliance at this time."),
+                            onActivate: canEnd ? () => ConfirmRelationshipChange(nation, ally, RelationChange.AllyToNormal, faction, influenceCost) : (Action)null);
+                    }
+                }
+
+                // Current rivals - can end rivalry
+                var currentRivals = nation.rivals?.Where(n => n != null).ToList() ?? new List<TINationState>();
+                if (currentRivals.Count > 0)
+                {
+                    section.AddItem("--- Current Rivals ---", $"{currentRivals.Count} rivals");
+                    foreach (var rival in currentRivals.OrderBy(n => n.displayName))
+                    {
+                        bool canEnd = nation.CanEndRivalry(rival);
+                        string status = canEnd ? "can end rivalry" : "cannot end rivalry";
+                        section.AddItem(rival.displayName, $"Rival, {status}",
+                            $"Rivalry with {rival.displayName}. " + (canEnd
+                                ? $"Ending this rivalry will cost {influenceCost:F0} Influence."
+                                : "Cannot end this rivalry at this time."),
+                            onActivate: canEnd ? () => ConfirmRelationshipChange(nation, rival, RelationChange.RivalToNormal, faction, influenceCost) : (Action)null);
+                    }
+                }
+
+                // Potential allies - neutral nations we can ally
+                var potentialAllies = allNations
+                    .Where(n => !currentAllies.Contains(n) && !currentRivals.Contains(n) && !(nation.wars?.Contains(n) ?? false))
+                    .Where(n => nation.CanAlly(n))
+                    .ToList();
+
+                if (potentialAllies.Count > 0)
+                {
+                    section.AddItem("--- Form New Alliance ---", $"{potentialAllies.Count} options");
+                    foreach (var potential in potentialAllies)
+                    {
+                        section.AddItem(potential.displayName, "can ally",
+                            $"Form an alliance with {potential.displayName}. This will cost {influenceCost:F0} Influence.",
+                            onActivate: () => ConfirmRelationshipChange(nation, potential, RelationChange.NormalToAlly, faction, influenceCost));
+                    }
+                }
+
+                // Potential rivals - neutral nations we can rival
+                var potentialRivals = allNations
+                    .Where(n => !currentAllies.Contains(n) && !currentRivals.Contains(n) && !(nation.wars?.Contains(n) ?? false))
+                    .Where(n => nation.CanRival(n))
+                    .ToList();
+
+                if (potentialRivals.Count > 0)
+                {
+                    section.AddItem("--- Declare New Rivalry ---", $"{potentialRivals.Count} options");
+                    foreach (var potential in potentialRivals)
+                    {
+                        section.AddItem(potential.displayName, "can rival",
+                            $"Declare {potential.displayName} as a rival. This will cost {influenceCost:F0} Influence.",
+                            onActivate: () => ConfirmRelationshipChange(nation, potential, RelationChange.NormalToRival, faction, influenceCost));
+                    }
+                }
+
+                // Current wars (read-only info)
+                var currentWars = nation.wars?.Where(n => n != null).ToList() ?? new List<TINationState>();
+                if (currentWars.Count > 0)
+                {
+                    section.AddItem("--- At War ---", $"{currentWars.Count} enemies (cannot change via relations)");
+                    foreach (var enemy in currentWars.OrderBy(n => n.displayName))
+                    {
+                        section.AddItem(enemy.displayName, "at war",
+                            $"Currently at war with {enemy.displayName}. Wars are resolved through military action or diplomatic missions, not the relations panel.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error building manage relations section: {ex.Message}");
+                section.AddItem("Error loading relations data");
+            }
+
+            return section;
+        }
+
+        private void ConfirmRelationshipChange(TINationState nation, TINationState targetNation, RelationChange change, TIFactionState faction, float influenceCost)
+        {
+            string actionDesc = GetRelationChangeDescription(change, targetNation);
+
+            // Check if we can afford it using the game's cost definition
+            if (!TINationState.FactionLevelRelationShipChangeCost.CanAfford(faction))
+            {
+                OnSpeak?.Invoke($"Cannot afford {influenceCost:F0} Influence for this change", true);
+                return;
+            }
+
+            var confirmOptions = new List<SelectionOption>
+            {
+                new SelectionOption
+                {
+                    Label = "Confirm",
+                    DetailText = $"{actionDesc} for {influenceCost:F0} Influence",
+                    Data = true
+                },
+                new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Keep current relationship",
+                    Data = false
+                }
+            };
+
+            OnEnterSelectionMode?.Invoke(
+                actionDesc + "?",
+                confirmOptions,
+                (index) =>
+                {
+                    if ((bool)confirmOptions[index].Data)
+                    {
+                        ExecuteRelationshipChange(nation, targetNation, change, faction, influenceCost);
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Relationship change cancelled", true);
+                    }
+                }
+            );
+        }
+
+        private string GetRelationChangeDescription(RelationChange change, TINationState target)
+        {
+            switch (change)
+            {
+                case RelationChange.NormalToAlly:
+                    return $"Form alliance with {target.displayName}";
+                case RelationChange.AllyToNormal:
+                    return $"End alliance with {target.displayName}";
+                case RelationChange.NormalToRival:
+                    return $"Declare rivalry with {target.displayName}";
+                case RelationChange.RivalToNormal:
+                    return $"End rivalry with {target.displayName}";
+                default:
+                    return $"Change relationship with {target.displayName}";
+            }
+        }
+
+        private void ExecuteRelationshipChange(TINationState nation, TINationState targetNation, RelationChange change, TIFactionState faction, float influenceCost)
+        {
+            try
+            {
+                // Execute the relationship change - HandleFactionLevelRelationshipChanges pays the cost internally
+                nation.HandleFactionLevelRelationshipChanges(targetNation, change);
+
+                string actionDesc = GetRelationChangeDescription(change, targetNation);
+                OnSpeak?.Invoke($"{actionDesc} complete", true);
+                MelonLogger.Msg($"Relationship change: {actionDesc} for {nation.displayName}");
+
+                // Refresh sections to show updated status
+                OnRefreshNeeded?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing relationship change: {ex.Message}");
+                OnSpeak?.Invoke("Error changing relationship", true);
+            }
+        }
+
+        #endregion
 
         private ISection CreateAllControlPointsSection(TINationState nation)
         {

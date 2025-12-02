@@ -45,6 +45,12 @@ namespace TISpeech.ReviewMode.Screens
         /// </summary>
         public Action<string, bool> OnSpeak { get; set; }
 
+        /// <summary>
+        /// Callback when sections are invalidated (after actions).
+        /// The controller should re-fetch sections from NavigationState.
+        /// </summary>
+        public Action OnSectionsInvalidated { get; set; }
+
         public override string Name => "Nations";
 
         /// <summary>
@@ -340,6 +346,14 @@ namespace TISpeech.ReviewMode.Screens
             // Wire up callbacks for army operations and nuclear launch
             nationReader.OnSpeak = OnSpeak;
             nationReader.OnEnterSelectionMode = OnEnterSelectionMode;
+            nationReader.OnRefreshNeeded = () =>
+            {
+                // Invalidate section cache so next read will get fresh data
+                cachedItemIndex = -1;
+                cachedSections.Clear();
+                // Tell controller to re-fetch navigation sections
+                OnSectionsInvalidated?.Invoke();
+            };
 
             // Get base sections from reader
             cachedSections = nationReader.GetSections(nation);
