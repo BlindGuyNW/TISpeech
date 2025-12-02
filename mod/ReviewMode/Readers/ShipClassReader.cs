@@ -89,169 +89,59 @@ namespace TISpeech.ReviewMode.Readers
                 return "Unknown ship class";
 
             var sb = new StringBuilder();
-            sb.AppendLine($"Ship Class: {design.className}");
-            sb.AppendLine();
+            var faction = GameControl.control?.activePlayer;
 
-            // Hull info
-            var hull = design.hullTemplate;
-            if (hull != null)
-            {
-                string sizeStr = hull.smallHull ? "Small" : (hull.mediumHull ? "Medium" : (hull.largeHull ? "Large" : "Huge"));
-                sb.AppendLine($"Hull: {hull.displayName} ({sizeStr})");
-                sb.AppendLine($"Length: {hull.length_m:N0}m, Width: {hull.width_m:N0}m");
-            }
-
-            // Role
+            // Use game's quickSummary for the main ship info
+            // This includes: class name, role, mass, crew, delta-V, acceleration, armor,
+            // battery, heat sink, radiators, weapons, and utility modules
             try
             {
+                string summary = design.quickSummary(
+                    obfuscateAlienData: false,  // We're viewing our own designs
+                    shipState: null,             // Template, not specific ship
+                    hideAlienDataDistance: false,
+                    includePartNames: true,      // Show drive/powerplant names
+                    listOfficers: false          // No officers for templates
+                );
+                sb.AppendLine(TISpeechMod.CleanText(summary));
+            }
+            catch
+            {
+                // Fallback to basic info if quickSummary fails
+                sb.AppendLine($"Ship Class: {design.className}");
                 sb.AppendLine($"Role: {design.roleStr}");
             }
-            catch { }
 
-            // Mass
-            sb.AppendLine();
-            sb.AppendLine("Mass:");
+            // Add info that quickSummary doesn't include
+
+            // Hull size info
             try
             {
-                float wetMass = design.wetMass_tons;
-                float dryMass = design.dryMass_tons();
-                float propellant = design.propellantMass_tons;
-                sb.AppendLine($"  Wet Mass: {wetMass:N0} tons");
-                sb.AppendLine($"  Dry Mass: {dryMass:N0} tons");
-                sb.AppendLine($"  Propellant: {propellant:N0} tons ({design.propellantTanks} tanks)");
-            }
-            catch { }
-
-            // Performance
-            sb.AppendLine();
-            sb.AppendLine("Performance:");
-            try
-            {
-                float deltaV = design.baseCruiseDeltaV_kps(forceUpdate: false);
-                float accel = design.baseCruiseAcceleration_gs(forceUpdate: false) * 1000f; // Convert to milligees
-                sb.AppendLine($"  Delta-V: {deltaV:F1} km/s");
-                sb.AppendLine($"  Cruise Acceleration: {accel:F1} mg");
-            }
-            catch { }
-
-            // Combat value
-            try
-            {
-                float combatValue = design.TemplateSpaceCombatValue();
-                sb.AppendLine($"  Combat Value: {combatValue:N0}");
-            }
-            catch { }
-
-            // Armor
-            sb.AppendLine();
-            sb.AppendLine("Armor:");
-            try
-            {
-                var noseArmor = design.noseArmorTemplate;
-                var lateralArmor = design.lateralArmorTemplate;
-                var tailArmor = design.tailArmorTemplate;
-
-                if (noseArmor != null)
-                    sb.AppendLine($"  Nose: {noseArmor.displayName}, {design.noseArmorValue} points, {design.noseArmorThickness:F2}m thick");
-                if (lateralArmor != null)
-                    sb.AppendLine($"  Lateral: {lateralArmor.displayName}, {design.lateralArmorValue} points, {design.lateralArmorThickness_m:F2}m thick");
-                if (tailArmor != null)
-                    sb.AppendLine($"  Tail: {tailArmor.displayName}, {design.tailArmorValue} points, {design.tailArmorThickness:F2}m thick");
-            }
-            catch { }
-
-            // Weapons
-            sb.AppendLine();
-            sb.AppendLine("Weapons:");
-            try
-            {
-                var noseWeapons = design.noseWeapons?.ToList();
-                var hullWeapons = design.hullWeapons?.ToList();
-
-                if (noseWeapons != null && noseWeapons.Count > 0)
+                var hull = design.hullTemplate;
+                if (hull != null)
                 {
-                    sb.AppendLine("  Nose Hardpoints:");
-                    foreach (var weapon in noseWeapons)
-                    {
-                        var template = weapon.weaponTemplate;
-                        if (template != null)
-                            sb.AppendLine($"    {template.displayName}");
-                    }
-                }
-
-                if (hullWeapons != null && hullWeapons.Count > 0)
-                {
-                    sb.AppendLine("  Hull Hardpoints:");
-                    foreach (var weapon in hullWeapons)
-                    {
-                        var template = weapon.weaponTemplate;
-                        if (template != null)
-                            sb.AppendLine($"    {template.displayName}");
-                    }
-                }
-
-                if ((noseWeapons == null || noseWeapons.Count == 0) &&
-                    (hullWeapons == null || hullWeapons.Count == 0))
-                {
-                    sb.AppendLine("  No weapons");
-                }
-            }
-            catch { }
-
-            // Propulsion
-            sb.AppendLine();
-            sb.AppendLine("Propulsion:");
-            try
-            {
-                var drive = design.driveTemplate;
-                var powerPlant = design.powerPlantTemplate;
-                var radiator = design.radiatorTemplate;
-
-                if (drive != null)
-                    sb.AppendLine($"  Drive: {drive.displayName}");
-                if (powerPlant != null)
-                    sb.AppendLine($"  Power Plant: {powerPlant.displayName}");
-                if (radiator != null)
-                    sb.AppendLine($"  Radiator: {radiator.displayName}");
-            }
-            catch { }
-
-            // Utility modules
-            try
-            {
-                var modules = design.utilityModules?.ToList();
-                if (modules != null && modules.Count > 0)
-                {
+                    string sizeStr = hull.smallHull ? "Small" : (hull.mediumHull ? "Medium" : (hull.largeHull ? "Large" : "Huge"));
                     sb.AppendLine();
-                    sb.AppendLine("Utility Modules:");
-                    foreach (var module in modules)
-                    {
-                        var template = module.moduleTemplate;
-                        if (template != null)
-                            sb.AppendLine($"  {template.displayName}");
-                    }
+                    sb.AppendLine($"Hull Size: {sizeStr} ({hull.length_m:N0}m x {hull.width_m:N0}m)");
                 }
             }
             catch { }
 
             // Build cost
-            sb.AppendLine();
-            sb.AppendLine("Build Cost:");
             try
             {
                 var cost = design.spaceResourceConstructionCost(forceUpdateToCache: false, shipyard: null);
-                sb.AppendLine($"  {FormatCost(cost)}");
+                sb.AppendLine();
+                sb.AppendLine($"Build Cost: {FormatCost(cost)}");
             }
             catch { }
 
             // Ships in service
-            var faction = GameControl.control?.activePlayer;
             if (faction != null)
             {
                 try
                 {
                     int inService = faction.ships?.Count(s => s.templateName == design.dataName) ?? 0;
-                    sb.AppendLine();
                     sb.AppendLine($"Ships in Service: {inService}");
                 }
                 catch { }

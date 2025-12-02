@@ -148,7 +148,7 @@ namespace TISpeech.ReviewMode.Readers
                         sb.AppendLine($"Category: {FormatCategory(tech.techCategory)}");
                         sb.AppendLine($"Progress: {progress.accumulatedResearch:F0} / {tech.GetResearchCost(null):F0} ({progress.progressFrac * 100:F1}%)");
 
-                        // Flavor text (what the game shows in the panel)
+                        // Brief summary (what the game shows in main panel)
                         try
                         {
                             string summary = tech.summary;
@@ -215,7 +215,7 @@ namespace TISpeech.ReviewMode.Readers
                         float cost = project.GetResearchCost(faction);
                         sb.AppendLine($"Progress: {projectProgress.accumulatedResearch:F0} / {cost:F0} ({projectProgress.progressFrac(faction) * 100:F1}%)");
 
-                        // Flavor text (what the game shows in the panel)
+                        // Brief summary (what the game shows in main panel)
                         try
                         {
                             string summary = project.summary;
@@ -223,6 +223,17 @@ namespace TISpeech.ReviewMode.Readers
                             {
                                 sb.AppendLine();
                                 sb.AppendLine(TISpeechMod.CleanText(summary));
+                            }
+                        }
+                        catch { }
+
+                        // Completion estimate
+                        try
+                        {
+                            string completionDate = faction.ProjectCompletionDate(slot);
+                            if (!string.IsNullOrEmpty(completionDate))
+                            {
+                                sb.AppendLine($"Estimated completion: {completionDate}");
                             }
                         }
                         catch { }

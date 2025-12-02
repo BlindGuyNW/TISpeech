@@ -151,7 +151,7 @@ namespace TISpeech.ReviewMode.Readers
                 var faction = GameControl.control?.activePlayer;
                 var finishedTechs = TIGlobalResearchState.FinishedTechs() ?? new List<TITechTemplate>();
 
-                // Overview section
+                // Overview section with full game description
                 var overview = new DataSection("Overview");
                 overview.AddItem("Name", tech.displayName);
                 overview.AddItem("Category", FormatCategory(tech.techCategory));
@@ -159,37 +159,18 @@ namespace TISpeech.ReviewMode.Readers
                 if (tech.endGameTech)
                     overview.AddItem("Type", "End-game technology");
 
-                // Add summary/flavor text
+                // Use the game's full description which includes description + warnings + effects
+                // Archive context includes the full description text
                 try
                 {
-                    string summary = tech.summary;
-                    if (!string.IsNullOrEmpty(summary) && summary != "<skip/>")
+                    string fullDesc = tech.GetFullDescription(faction, TechBenefitsContext.Archive);
+                    if (!string.IsNullOrEmpty(fullDesc))
                     {
-                        overview.AddItem("Description", TISpeechMod.CleanText(summary));
+                        overview.AddItem("Description", TISpeechMod.CleanText(fullDesc));
                     }
                 }
                 catch { }
                 sections.Add(overview);
-
-                // Effects section
-                if (tech.Effects != null && tech.Effects.Count > 0)
-                {
-                    var effectsSection = new DataSection("Effects");
-                    foreach (var effect in tech.Effects)
-                    {
-                        try
-                        {
-                            string desc = effect.description(faction, null);
-                            if (!string.IsNullOrEmpty(desc))
-                            {
-                                effectsSection.AddItem(TISpeechMod.CleanText(desc));
-                            }
-                        }
-                        catch { }
-                    }
-                    if (effectsSection.Items.Count > 0)
-                        sections.Add(effectsSection);
-                }
 
                 // Prerequisites section
                 if (tech.TechPrereqs != null && tech.TechPrereqs.Count > 0)
@@ -204,22 +185,11 @@ namespace TISpeech.ReviewMode.Readers
                     sections.Add(prereqSection);
                 }
 
-                // Unlocks section (orgs)
+                // Unlocks orgs - match game behavior (just indicate orgs are unlocked, don't list names)
                 if (tech.orgTypeUnlocks != null && tech.orgTypeUnlocks.Count > 0)
                 {
-                    var orgsSection = new DataSection("Unlocks Organizations");
-                    foreach (var orgDataName in tech.orgTypeUnlocks)
-                    {
-                        try
-                        {
-                            var orgTemplate = TemplateManager.Find<TIOrgTemplate>(orgDataName);
-                            orgsSection.AddItem(orgTemplate?.displayName ?? orgDataName);
-                        }
-                        catch
-                        {
-                            orgsSection.AddItem(orgDataName);
-                        }
-                    }
+                    var orgsSection = new DataSection("Unlocks");
+                    orgsSection.AddItem("Unlocks new organizations for purchase on the Org Market");
                     sections.Add(orgsSection);
                 }
 
@@ -263,7 +233,7 @@ namespace TISpeech.ReviewMode.Readers
             sb.AppendLine($"{tech.displayName}");
             sb.AppendLine($"Category: {FormatCategory(tech.techCategory)}, Cost: {tech.researchCost:F0}");
 
-            // Just the summary for the brief view
+            // Brief summary (drill into sections for full details)
             try
             {
                 string summary = tech.summary;
