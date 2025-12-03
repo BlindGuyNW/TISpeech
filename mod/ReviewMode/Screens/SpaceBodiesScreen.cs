@@ -222,12 +222,25 @@ namespace TISpeech.ReviewMode.Screens
                 var hab = HabReader.GetHabById(habId);
                 if (hab != null)
                 {
-                    var habReader = new HabReader();
+                    // Use factory method to ensure consistent callback wiring (same as HabsScreen)
+                    var habReader = HabReader.CreateConfigured(
+                        OnEnterSelectionMode,
+                        OnSpeak,
+                        InvalidateCache);
                     return habReader.GetSections(hab);
                 }
             }
 
             return base.GetSectionsForSectionItem(secondaryId);
+        }
+
+        /// <summary>
+        /// Invalidate cached sections (called after actions modify hab state).
+        /// </summary>
+        private void InvalidateCache()
+        {
+            cachedItemIndex = -1;
+            cachedSections.Clear();
         }
 
         public override string GetItemSortName(int index)

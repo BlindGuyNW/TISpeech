@@ -30,6 +30,27 @@ namespace TISpeech.ReviewMode.Readers
         /// Callback to refresh sections after an action.
         /// </summary>
         public Action OnRefreshSections { get; set; }
+
+        /// <summary>
+        /// Create a HabReader with all callbacks properly wired up.
+        /// Use this factory method to ensure consistent behavior across all screens.
+        /// </summary>
+        /// <param name="onEnterSelectionMode">Callback for selection dialogs</param>
+        /// <param name="onSpeak">Callback for speech output</param>
+        /// <param name="onRefreshSections">Callback when sections need refresh (e.g., after an action)</param>
+        /// <returns>A fully configured HabReader instance</returns>
+        public static HabReader CreateConfigured(
+            Action<string, List<SelectionOption>, Action<int>> onEnterSelectionMode,
+            Action<string, bool> onSpeak,
+            Action onRefreshSections)
+        {
+            return new HabReader
+            {
+                OnEnterSelectionMode = onEnterSelectionMode,
+                OnSpeak = onSpeak,
+                OnRefreshSections = onRefreshSections
+            };
+        }
         public string ReadSummary(TIHabState hab)
         {
             if (hab == null)
@@ -171,6 +192,11 @@ namespace TISpeech.ReviewMode.Readers
                 var addModuleSection = CreateAddModuleSection(hab);
                 if (addModuleSection != null)
                     sections.Add(addModuleSection);
+
+                // Module Actions section (power toggle, decommission, upgrade, etc.)
+                var moduleActionsSection = CreateModuleActionsSection(hab);
+                if (moduleActionsSection != null)
+                    sections.Add(moduleActionsSection);
             }
 
             // Resources section
@@ -933,6 +959,539 @@ namespace TISpeech.ReviewMode.Readers
 
             return section;
         }
+
+        /// <summary>
+        /// Create section for module actions (power toggle, decommission, upgrade, etc.)
+        /// </summary>
+        private ISection CreateModuleActionsSection(TIHabState hab)
+        {
+            var section = new DataSection("Module Actions");
+            var faction = hab.coreFaction;
+            if (faction == null)
+                return null;
+
+            // Power All action (if any modules are unpowered and could be powered)
+            var unpoweredModules = hab.AllModules()?.Where(m => m.functional && !m.powered && m.CanPower()).ToList();
+            if (unpoweredModules != null && unpoweredModules.Count > 0)
+            {
+                var habCopy = hab;
+                section.AddItem(
+                    "Power All Modules",
+                    $"{unpoweredModules.Count} module{(unpoweredModules.Count != 1 ? "s" : "")} can be powered on",
+                    "Powers on all modules that can receive power",
+                    onActivate: () => ExecutePowerAll(habCopy));
+            }
+
+            // List modules with available actions
+            foreach (var sector in hab.sectors.Where(s => s.active && s.faction == faction))
+            {
+                for (int slot = 0; slot < sector.habModules.Count; slot++)
+                {
+                    var module = sector.habModules[slot];
+                    if (module.empty)
+                        continue;
+
+                    int displayNum = TISectorState.sectorDisplayNum(sector.sectorNum, hab.habType);
+                    string slotLabel = GetSlotLabel(hab, sector, slot);
+                    string moduleLocation = $"Sector {displayNum}, {slotLabel}";
+
+                    // Add actions based on module state
+                    AddModuleActions(section, hab, module, moduleLocation);
+                }
+            }
+
+            // Only return section if it has items
+            return section.ItemCount > 0 ? section : null;
+        }
+
+        /// <summary>
+        /// Add available actions for a specific module.
+        /// </summary>
+        private void AddModuleActions(DataSection section, TIHabState hab, TIHabModuleState module, string location)
+        {
+            var faction = hab.coreFaction;
+            if (faction == null)
+                return;
+
+            string moduleName = module.displayName ?? "Unknown";
+
+            // Handle destroyed modules - can rebuild
+            if (module.destroyed && module.priorModuleTemplate != null)
+            {
+                var priorTemplate = module.priorModuleTemplate;
+                if (hab.AllowedModules(faction).Contains(priorTemplate))
+                {
+                    var moduleCopy = module;
+                    var habCopy = hab;
+                    var templateCopy = priorTemplate;
+
+                    string rebuildCost = GetModuleCostSummary(priorTemplate, hab, faction);
+                    section.AddItem(
+                        $"Rebuild {priorTemplate.displayName}",
+                        $"{location}, {rebuildCost}",
+                        $"Rebuild the destroyed {priorTemplate.displayName} module",
+                        onActivate: () => StartRebuildModule(habCopy, moduleCopy, templateCopy));
+                }
+                return; // Destroyed modules have no other actions
+            }
+
+            // Handle modules being decommissioned - can cancel
+            if (module.decommissioning)
+            {
+                var moduleCopy = module;
+                section.AddItem(
+                    $"Cancel Decommission: {moduleName}",
+                    $"{location}",
+                    "Cancel the decommissioning process and keep the module",
+                    onActivate: () => ExecuteCancelDecommission(moduleCopy));
+                return; // Decommissioning modules have no other actions
+            }
+
+            // Handle modules under construction - can cancel
+            if (module.underConstruction)
+            {
+                bool canImmediateCancel = module.DecommissionDuration_days() <= 0f;
+                if (module.CanDecommissionModule(canImmediateCancel))
+                {
+                    var moduleCopy = module;
+                    string cancelLabel = canImmediateCancel ? "Cancel Construction" : "Decommission (Under Construction)";
+                    string cancelDesc = canImmediateCancel
+                        ? "Cancel construction and get partial refund"
+                        : $"Decommission module, takes {(int)module.DecommissionDuration_days()} days";
+                    section.AddItem(
+                        $"{cancelLabel}: {moduleName}",
+                        $"{location}",
+                        cancelDesc,
+                        onActivate: () => ExecuteDecommissionModule(moduleCopy));
+                }
+                return; // Under construction modules have no other actions (besides cancel)
+            }
+
+            // For functional modules, we can have multiple actions
+            var moduleTemplate = module.moduleTemplate;
+            if (moduleTemplate == null)
+                return;
+
+            // Power Toggle - if module can be turned off/on
+            if (moduleTemplate.CanTurnOff && module.functional)
+            {
+                var moduleCopy = module;
+                if (module.powered && module.CanDepower())
+                {
+                    int powerValue = module.ModulePower();
+                    string powerEffect = module.PowerProvider()
+                        ? $"Will remove {powerValue} MW generation"
+                        : $"Will free up {-powerValue} MW";
+                    section.AddItem(
+                        $"Power Off: {moduleName}",
+                        $"{location}, {powerEffect}",
+                        "Turn off this module to save power or disable its effects",
+                        onActivate: () => ExecuteTogglePower(moduleCopy, false));
+                }
+                else if (!module.powered && module.CanPower())
+                {
+                    int powerValue = module.ModulePower();
+                    string powerEffect = module.PowerProvider()
+                        ? $"Will add {powerValue} MW generation"
+                        : $"Will consume {-powerValue} MW";
+                    section.AddItem(
+                        $"Power On: {moduleName}",
+                        $"{location}, {powerEffect}",
+                        "Turn on this module to enable its effects",
+                        onActivate: () => ExecuteTogglePower(moduleCopy, true));
+                }
+            }
+
+            // Upgrade - if module has an upgrade path
+            if (module.CanUpgrade(faction))
+            {
+                var upgradeTemplate = moduleTemplate.UpgradeModuleTemplate(faction, checkUnlocked: true);
+                if (upgradeTemplate != null && hab.IsModuleAllowedForThisHab(faction, upgradeTemplate))
+                {
+                    var moduleCopy = module;
+                    var habCopy = hab;
+                    var upgradeCopy = upgradeTemplate;
+
+                    string upgradeCost = GetUpgradeCostSummary(upgradeTemplate, hab, faction);
+                    section.AddItem(
+                        $"Upgrade to {upgradeTemplate.displayName}",
+                        $"{location}: {moduleName}, {upgradeCost}",
+                        $"Upgrade {moduleName} to {upgradeTemplate.displayName}",
+                        onActivate: () => StartUpgradeModule(habCopy, moduleCopy, upgradeCopy));
+                }
+            }
+
+            // Decommission - if module can be decommissioned
+            if (module.CanDecommissionModule(immediateCancel: false))
+            {
+                var moduleCopy = module;
+                var cost = module.DecommissionModuleCost();
+                float days = module.DecommissionDuration_days();
+                string costStr = days > 0 ? $"{(int)days} days" : "Instant";
+                if (cost.anyDebit)
+                {
+                    costStr += $", {CostFormatter.FormatCostOnly(cost, faction)}";
+                }
+                section.AddItem(
+                    $"Decommission: {moduleName}",
+                    $"{location}, {costStr}",
+                    "Remove this module from the hab",
+                    onActivate: () => ConfirmDecommissionModule(moduleCopy));
+            }
+        }
+
+        #region Module Action Executors
+
+        /// <summary>
+        /// Execute the Power All action for a hab.
+        /// </summary>
+        private void ExecutePowerAll(TIHabState hab)
+        {
+            try
+            {
+                var faction = hab.coreFaction;
+                if (faction == null)
+                    return;
+
+                // Use the game's action
+                var action = new UpdateHabPowerAllAction(hab);
+                faction.playerControl.StartAction(action);
+
+                OnSpeak?.Invoke("Powering on all modules", true);
+
+                // Play sound
+                try
+                {
+                    PavonisInteractive.TerraInvicta.Audio.AudioManager.PlayOneShot("event:/SFX/UI_SFX/trig_SFX_PowerModule");
+                }
+                catch { }
+
+                OnRefreshSections?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing power all: {ex.Message}");
+                OnSpeak?.Invoke("Error powering modules", true);
+            }
+        }
+
+        /// <summary>
+        /// Execute toggle power for a single module.
+        /// </summary>
+        private void ExecuteTogglePower(TIHabModuleState module, bool powerOn)
+        {
+            try
+            {
+                var faction = module.sector?.faction;
+                if (faction == null)
+                    return;
+
+                var action = new UpdateHabModulePowerStatus(module, powerOn, null);
+                faction.playerControl.StartAction(action);
+
+                string actionText = powerOn ? "Powered on" : "Powered off";
+                OnSpeak?.Invoke($"{actionText}: {module.displayName}", true);
+
+                // Play sound
+                try
+                {
+                    string sound = powerOn
+                        ? "event:/SFX/UI_SFX/trig_SFX_PowerModule"
+                        : "event:/SFX/UI_SFX/trig_SFX_DepowerModule";
+                    PavonisInteractive.TerraInvicta.Audio.AudioManager.PlayOneShot(sound);
+                }
+                catch { }
+
+                OnRefreshSections?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error toggling power: {ex.Message}");
+                OnSpeak?.Invoke("Error toggling power", true);
+            }
+        }
+
+        /// <summary>
+        /// Cancel decommissioning of a module.
+        /// </summary>
+        private void ExecuteCancelDecommission(TIHabModuleState module)
+        {
+            try
+            {
+                module.CancelDecommissionModule();
+                OnSpeak?.Invoke($"Cancelled decommission: {module.displayName}", true);
+
+                // Play sound
+                try
+                {
+                    PavonisInteractive.TerraInvicta.Audio.AudioManager.PlayOneShot("event:/SFX/UI_SFX/trig_SFX_GenericConfirm");
+                }
+                catch { }
+
+                OnRefreshSections?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error cancelling decommission: {ex.Message}");
+                OnSpeak?.Invoke("Error cancelling decommission", true);
+            }
+        }
+
+        /// <summary>
+        /// Execute decommission (used for both completed modules and canceling construction).
+        /// </summary>
+        private void ExecuteDecommissionModule(TIHabModuleState module)
+        {
+            try
+            {
+                var faction = module.sector?.faction;
+                if (faction == null)
+                    return;
+
+                var cost = module.DecommissionModuleCost();
+                if (!cost.CanAfford(faction))
+                {
+                    OnSpeak?.Invoke("Cannot afford to decommission", true);
+                    return;
+                }
+
+                var action = new DecommissionHabModuleAction(module);
+                faction.playerControl.StartAction(action);
+
+                float days = module.DecommissionDuration_days();
+                string message = days > 0
+                    ? $"Decommissioning {module.displayName}, {(int)days} days"
+                    : $"Cancelled construction of {module.displayName}";
+                OnSpeak?.Invoke(message, true);
+
+                // Play sound
+                try
+                {
+                    PavonisInteractive.TerraInvicta.Audio.AudioManager.PlayOneShot("event:/SFX/UI_SFX/trig_SFX_GenericConfirm");
+                }
+                catch { }
+
+                OnRefreshSections?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error decommissioning module: {ex.Message}");
+                OnSpeak?.Invoke("Error decommissioning module", true);
+            }
+        }
+
+        /// <summary>
+        /// Confirm decommission with cost dialog.
+        /// </summary>
+        private void ConfirmDecommissionModule(TIHabModuleState module)
+        {
+            if (OnEnterSelectionMode == null)
+            {
+                // No selection mode available, just execute directly
+                ExecuteDecommissionModule(module);
+                return;
+            }
+
+            var faction = module.sector?.faction;
+            if (faction == null)
+                return;
+
+            var cost = module.DecommissionModuleCost();
+            float days = module.DecommissionDuration_days();
+
+            var options = new List<SelectionOption>();
+
+            string costStr = days > 0
+                ? $"Cost: {CostFormatter.FormatCostOnly(cost, faction)}, Time: {(int)days} days"
+                : "Instant - will get partial refund";
+
+            bool canAfford = cost.CanAfford(faction);
+
+            options.Add(new SelectionOption
+            {
+                Label = canAfford ? "Confirm Decommission" : "Cannot Afford",
+                DetailText = costStr,
+                Data = canAfford ? "confirm" : "cannot"
+            });
+
+            options.Add(new SelectionOption
+            {
+                Label = "Cancel",
+                DetailText = "Keep the module",
+                Data = "cancel"
+            });
+
+            OnEnterSelectionMode($"Decommission {module.displayName}?", options, (index) =>
+            {
+                if (index == 0 && canAfford)
+                {
+                    ExecuteDecommissionModule(module);
+                }
+                else
+                {
+                    OnSpeak?.Invoke("Decommission cancelled", true);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Start the rebuild flow for a destroyed module.
+        /// </summary>
+        private void StartRebuildModule(TIHabState hab, TIHabModuleState module, TIHabModuleTemplate priorTemplate)
+        {
+            // Use the same flow as building a new module
+            ConfirmBuildModule(hab, priorTemplate, module.sector, module.slot);
+        }
+
+        /// <summary>
+        /// Start the upgrade flow for a module.
+        /// </summary>
+        private void StartUpgradeModule(TIHabState hab, TIHabModuleState module, TIHabModuleTemplate upgradeTemplate)
+        {
+            if (OnEnterSelectionMode == null)
+            {
+                OnSpeak?.Invoke("Cannot upgrade - selection mode unavailable", true);
+                return;
+            }
+
+            var faction = hab.coreFaction;
+            if (faction == null)
+                return;
+
+            try
+            {
+                // Calculate upgrade costs (from space is used for upgrades since module is already there)
+                var spaceCostPure = upgradeTemplate.CostFromSpace(faction, hab, isUpgrade: true, substituteBoost: false);
+                var spaceCostWithBoost = upgradeTemplate.CostFromSpace(faction, hab, isUpgrade: true, substituteBoost: true);
+
+                bool canAffordSpacePure = spaceCostPure.CanAfford(faction);
+                bool canAffordSpaceWithBoost = spaceCostWithBoost.CanAfford(faction);
+
+                var spaceCost = canAffordSpacePure ? spaceCostPure : spaceCostWithBoost;
+                bool canAffordSpace = canAffordSpacePure || canAffordSpaceWithBoost;
+                bool usingBoostSubstitution = !canAffordSpacePure && canAffordSpaceWithBoost;
+
+                var options = new List<SelectionOption>();
+                var buildOptions = new List<CostOptionData>();
+
+                int displayNum = TISectorState.sectorDisplayNum(module.sector.sectorNum, hab.habType);
+                string slotLabel = GetSlotLabel(hab, module.sector, module.slot);
+
+                // Show upgrade cost
+                string spaceCostStr = CostFormatter.FormatWithTime(spaceCost, faction);
+                string spaceLabel;
+                string spaceDetail;
+
+                if (usingBoostSubstitution)
+                {
+                    spaceLabel = canAffordSpaceWithBoost
+                        ? $"Upgrade (boost substituted): {spaceCostStr}"
+                        : $"Upgrade: {spaceCostStr} (Cannot afford)";
+                    spaceDetail = canAffordSpaceWithBoost
+                        ? "Using boost to substitute for missing space resources"
+                        : "Insufficient space resources and boost";
+                }
+                else
+                {
+                    spaceLabel = canAffordSpacePure
+                        ? $"Upgrade: {spaceCostStr}"
+                        : $"Upgrade: {spaceCostStr} (Cannot afford)";
+                    spaceDetail = canAffordSpacePure
+                        ? "Upgrade using local space resources"
+                        : "Insufficient space resources";
+                }
+
+                options.Add(new SelectionOption
+                {
+                    Label = spaceLabel,
+                    DetailText = spaceDetail,
+                    Data = "upgrade"
+                });
+                buildOptions.Add(new CostOptionData { Cost = spaceCost, CanAfford = canAffordSpace, Source = "Space" });
+
+                options.Add(new SelectionOption
+                {
+                    Label = "Cancel",
+                    DetailText = "Cancel module upgrade",
+                    Data = "cancel"
+                });
+
+                OnEnterSelectionMode($"Upgrade {module.displayName} to {upgradeTemplate.displayName}?", options, (index) =>
+                {
+                    if (index == 0 && canAffordSpace)
+                    {
+                        ExecuteUpgradeModule(hab, module, upgradeTemplate, spaceCost);
+                    }
+                    else if (index == 0 && !canAffordSpace)
+                    {
+                        OnSpeak?.Invoke("Cannot afford upgrade", true);
+                    }
+                    else
+                    {
+                        OnSpeak?.Invoke("Upgrade cancelled", true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error starting upgrade: {ex.Message}");
+                OnSpeak?.Invoke("Error starting upgrade", true);
+            }
+        }
+
+        /// <summary>
+        /// Execute the module upgrade.
+        /// </summary>
+        private void ExecuteUpgradeModule(TIHabState hab, TIHabModuleState module, TIHabModuleTemplate upgradeTemplate, TIResourcesCost cost)
+        {
+            var faction = hab.coreFaction;
+            if (faction == null)
+                return;
+
+            try
+            {
+                // Use BuildHabModuleAction - the game uses this for upgrades too
+                var action = new BuildHabModuleAction(upgradeTemplate, module.sector, module.slot, cost, null);
+                faction.playerControl.StartAction(action);
+
+                int days = (int)cost.completionTime_days;
+                OnSpeak?.Invoke($"Upgrade started: {module.displayName} to {upgradeTemplate.displayName}. Completion in {days} days.", true);
+
+                // Play sound
+                try
+                {
+                    PavonisInteractive.TerraInvicta.Audio.AudioManager.PlayOneShot("event:/SFX/UI_SFX/trig_SFX_ConfirmAlt");
+                }
+                catch { }
+
+                OnRefreshSections?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing upgrade: {ex.Message}");
+                OnSpeak?.Invoke("Error upgrading module", true);
+            }
+        }
+
+        /// <summary>
+        /// Get a brief cost summary for module upgrade.
+        /// </summary>
+        private string GetUpgradeCostSummary(TIHabModuleTemplate upgradeTemplate, TIHabState hab, TIFactionState faction)
+        {
+            try
+            {
+                var spaceCost = upgradeTemplate.CostFromSpace(faction, hab, isUpgrade: true, substituteBoost: true);
+                bool canAfford = spaceCost.CanAfford(faction);
+                string costStr = CostFormatter.FormatCostOnly(spaceCost, faction);
+                return canAfford ? costStr : $"{costStr} (unaffordable)";
+            }
+            catch
+            {
+                return "Cost unknown";
+            }
+        }
+
+        #endregion
 
         #endregion
 

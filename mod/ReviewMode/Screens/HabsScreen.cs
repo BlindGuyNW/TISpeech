@@ -164,19 +164,24 @@ namespace TISpeech.ReviewMode.Screens
             var hab = items[index];
             cachedItemIndex = index;
 
-            // Wire up callbacks for the reader
-            habReader.OnEnterSelectionMode = OnEnterSelectionMode;
-            habReader.OnSpeak = OnSpeak;
-            habReader.OnRefreshSections = () =>
-            {
-                // Invalidate cache and re-fetch sections
-                cachedItemIndex = -1;
-                cachedSections.Clear();
-            };
+            // Use factory method to ensure consistent callback wiring
+            var configuredReader = HabReader.CreateConfigured(
+                OnEnterSelectionMode,
+                OnSpeak,
+                InvalidateCache);
 
-            cachedSections = habReader.GetSections(hab);
+            cachedSections = configuredReader.GetSections(hab);
 
             return cachedSections;
+        }
+
+        /// <summary>
+        /// Invalidate cached sections (called after actions modify hab state).
+        /// </summary>
+        private void InvalidateCache()
+        {
+            cachedItemIndex = -1;
+            cachedSections.Clear();
         }
 
         public override string GetItemSortName(int index)
