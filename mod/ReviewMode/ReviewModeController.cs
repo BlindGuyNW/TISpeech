@@ -210,12 +210,13 @@ namespace TISpeech.ReviewMode
         private void InitializeMenuScreens()
         {
             menuScreens.Clear();
-            menuScreens.Add(new MainMenuScreen());   // 0
-            menuScreens.Add(new LoadGameScreen());   // 1
-            menuScreens.Add(new NewGameScreen());    // 2
-            menuScreens.Add(new OptionsScreen());    // 3
-            menuScreens.Add(new SkirmishScreen());   // 4
-            menuScreens.Add(new ModsScreen());       // 5
+            menuScreens.Add(new MainMenuScreen());              // 0
+            menuScreens.Add(new LoadGameScreen());              // 1
+            menuScreens.Add(new NewGameScreen());               // 2
+            menuScreens.Add(new OptionsScreen());               // 3
+            menuScreens.Add(new SkirmishScreen());              // 4
+            menuScreens.Add(new ModsScreen());                  // 5
+            menuScreens.Add(new TutorialRecommendationScreen()); // 6
             MelonLogger.Msg($"Registered {menuScreens.Count} menu screens for menu mode");
         }
 
@@ -225,6 +226,10 @@ namespace TISpeech.ReviewMode
         /// </summary>
         private int GetActiveMenuScreenIndex()
         {
+            // Check tutorial recommendation first - it overlays the main menu on first launch
+            if (TutorialRecommendationScreen.IsVisible())
+                return 6; // TutorialRecommendationScreen
+
             // Check for specific sub-menus first (most specific to least)
             if (LoadGameScreen.IsVisible())
                 return 1; // LoadGameScreen

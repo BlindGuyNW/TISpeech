@@ -21,6 +21,11 @@ namespace TISpeech.ReviewMode
         /// If true, this is an informational item (headline/body) that cannot be activated.
         /// </summary>
         public bool IsInformational { get; set; }
+        /// <summary>
+        /// Semantic action identifier (e.g., "GoTo", "OK", "Close", "Exit").
+        /// Used for logic decisions independent of localized label text.
+        /// </summary>
+        public string Action { get; set; }
     }
 
     /// <summary>
@@ -217,7 +222,8 @@ namespace TISpeech.ReviewMode
                     Label = label,
                     Button = controller.gotoButton,
                     DetailText = "Navigate to the related location or object",
-                    IsNarrativeOption = false
+                    IsNarrativeOption = false,
+                    Action = "GoTo"
                 });
                 MelonLogger.Msg($"Added gotoButton: {label}");
             }
@@ -233,7 +239,8 @@ namespace TISpeech.ReviewMode
                     Label = label,
                     Button = controller.okayButton,
                     DetailText = "Acknowledge and continue",
-                    IsNarrativeOption = false
+                    IsNarrativeOption = false,
+                    Action = "OK"
                 });
                 MelonLogger.Msg($"Added okayButton: {label}");
             }
@@ -249,7 +256,8 @@ namespace TISpeech.ReviewMode
                     Label = label,
                     Button = controller.closeButton,
                     DetailText = "Dismiss this notification",
-                    IsNarrativeOption = false
+                    IsNarrativeOption = false,
+                    Action = "Close"
                 });
                 MelonLogger.Msg($"Added closeButton: {label}");
             }
@@ -264,7 +272,8 @@ namespace TISpeech.ReviewMode
                     Label = "Exit",
                     Button = controller.exitButton,
                     DetailText = "Close this notification",
-                    IsNarrativeOption = false
+                    IsNarrativeOption = false,
+                    Action = "Exit"
                 });
                 MelonLogger.Msg("Added exitButton: Exit");
             }
@@ -431,25 +440,30 @@ namespace TISpeech.ReviewMode
 
         /// <summary>
         /// Find and navigate to the Close/Cancel button.
+        /// Uses Action field for language-independent identification.
         /// </summary>
         /// <returns>True if a close option was found and selected.</returns>
         public bool SelectCloseOption()
         {
+            // First try to find by Action (language-independent)
             for (int i = 0; i < Options.Count; i++)
             {
-                string label = Options[i].Label.ToLower();
-                if (label.Contains("close") || label.Contains("cancel") || label.Contains("exit"))
+                string action = Options[i].Action;
+                if (action == "Close" || action == "Exit" || action == "OK")
                 {
                     CurrentIndex = i;
                     return true;
                 }
             }
 
-            // If no explicit close, try the last option (usually Close or OK)
-            if (Options.Count > 0)
+            // If no explicit close action, try the last non-informational option
+            for (int i = Options.Count - 1; i >= 0; i--)
             {
-                CurrentIndex = Options.Count - 1;
-                return true;
+                if (!Options[i].IsInformational && Options[i].Button != null)
+                {
+                    CurrentIndex = i;
+                    return true;
+                }
             }
 
             return false;

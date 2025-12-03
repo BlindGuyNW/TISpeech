@@ -54,6 +54,12 @@ namespace TISpeech.ReviewMode.MenuMode
         public string DetailText { get; set; }
 
         /// <summary>
+        /// Semantic action identifier for this control (e.g., "NewGame", "LoadGame").
+        /// Used for determining behavior independent of localized label text.
+        /// </summary>
+        public string Action { get; set; }
+
+        /// <summary>
         /// For sliders: minimum value
         /// </summary>
         public float MinValue { get; set; }

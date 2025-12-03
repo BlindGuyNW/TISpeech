@@ -19,6 +19,15 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
         private List<MenuControl> controls = new List<MenuControl>();
         private StartMenuController menuController;
 
+        // Cached button references for object-based identification
+        private Button newGameButton;
+        private Button loadGameButton;
+        private Button optionsButton;
+        private Button skirmishButton;
+        private Button modsButton;
+        private Button creditsButton;
+        private Button exitButton;
+
         public override List<MenuControl> GetControls()
         {
             return controls;
@@ -37,29 +46,11 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
                     return;
                 }
 
-                // Get the main menu buttons in order
-                // These are typically children of the buttons canvas group
+                // Cache button references by finding buttons from their known TMP_Text fields
+                CacheButtonReferences();
 
-                // Continue button
-                if (menuController.continueButton != null && menuController.continueButton.gameObject.activeInHierarchy)
-                {
-                    var control = MenuControl.FromButton(menuController.continueButton, "Continue");
-                    if (control != null)
-                        controls.Add(control);
-                }
-
-                // Find buttons by their text labels
-                // The main menu buttons are typically in the buttonsCanvasGroup
-                var buttonsParent = menuController.buttonsCanvasGroup?.transform;
-                if (buttonsParent != null)
-                {
-                    AddButtonsFromParent(buttonsParent);
-                }
-                else
-                {
-                    // Fallback: Find buttons in the scene root
-                    FindMainMenuButtons();
-                }
+                // Add buttons in a logical order
+                AddKnownButtons();
 
                 MelonLogger.Msg($"MainMenuScreen: Found {controls.Count} controls");
             }
@@ -69,84 +60,120 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
             }
         }
 
-        private void AddButtonsFromParent(Transform parent)
+        /// <summary>
+        /// Cache button references by finding the Button component from known TMP_Text fields.
+        /// This allows us to identify buttons by object reference, not by localized text.
+        /// </summary>
+        private void CacheButtonReferences()
         {
-            // Get all buttons in the parent
-            var buttons = parent.GetComponentsInChildren<Button>(includeInactive: false);
+            newGameButton = FindButtonForText(menuController.newGameText);
+            loadGameButton = FindButtonForText(menuController.loadGameText);
+            optionsButton = FindButtonForText(menuController.optionsText);
+            skirmishButton = FindButtonForText(menuController.skirmishModeText);
+            modsButton = FindButtonForText(menuController.modsText);
+            creditsButton = FindButtonForText(menuController.creditsText);
+            exitButton = FindButtonForText(menuController.exitText);
+        }
 
-            foreach (var button in buttons)
+        /// <summary>
+        /// Add buttons using known references, with semantic Action identifiers.
+        /// </summary>
+        private void AddKnownButtons()
+        {
+            // Continue button (has direct Button reference)
+            if (menuController.continueButton != null && menuController.continueButton.gameObject.activeInHierarchy)
             {
-                // Skip the continue button if we already added it
-                if (menuController.continueButton != null && button == menuController.continueButton)
-                    continue;
-
-                // Get button label from TMP_Text
-                var tmpText = button.GetComponentInChildren<TMP_Text>();
-                if (tmpText == null)
-                    continue;
-
-                string label = TISpeechMod.CleanText(tmpText.text);
-                if (string.IsNullOrWhiteSpace(label))
-                    continue;
-
-                // Skip if already added
-                bool alreadyExists = controls.Exists(c => c.Label == label);
-                if (alreadyExists)
-                    continue;
-
-                var control = MenuControl.FromButton(button, label);
+                var control = CreateControlWithAction(menuController.continueButton,
+                    menuController.continueButtonText, "Continue");
                 if (control != null)
-                {
                     controls.Add(control);
-                    MelonLogger.Msg($"MainMenuScreen: Added button '{label}'");
-                }
+            }
+
+            // New Game
+            if (newGameButton != null && newGameButton.gameObject.activeInHierarchy)
+            {
+                var control = CreateControlWithAction(newGameButton,
+                    menuController.newGameText, "NewGame");
+                if (control != null)
+                    controls.Add(control);
+            }
+
+            // Load Game
+            if (loadGameButton != null && loadGameButton.gameObject.activeInHierarchy)
+            {
+                var control = CreateControlWithAction(loadGameButton,
+                    menuController.loadGameText, "LoadGame");
+                if (control != null)
+                    controls.Add(control);
+            }
+
+            // Options
+            if (optionsButton != null && optionsButton.gameObject.activeInHierarchy)
+            {
+                var control = CreateControlWithAction(optionsButton,
+                    menuController.optionsText, "Options");
+                if (control != null)
+                    controls.Add(control);
+            }
+
+            // Skirmish
+            if (skirmishButton != null && skirmishButton.gameObject.activeInHierarchy)
+            {
+                var control = CreateControlWithAction(skirmishButton,
+                    menuController.skirmishModeText, "Skirmish");
+                if (control != null)
+                    controls.Add(control);
+            }
+
+            // Mods
+            if (modsButton != null && modsButton.gameObject.activeInHierarchy)
+            {
+                var control = CreateControlWithAction(modsButton,
+                    menuController.modsText, "Mods");
+                if (control != null)
+                    controls.Add(control);
+            }
+
+            // Credits
+            if (creditsButton != null && creditsButton.gameObject.activeInHierarchy)
+            {
+                var control = CreateControlWithAction(creditsButton,
+                    menuController.creditsText, "Credits");
+                if (control != null)
+                    controls.Add(control);
+            }
+
+            // Exit
+            if (exitButton != null && exitButton.gameObject.activeInHierarchy)
+            {
+                var control = CreateControlWithAction(exitButton,
+                    menuController.exitText, "Exit");
+                if (control != null)
+                    controls.Add(control);
             }
         }
 
-        private void FindMainMenuButtons()
+        /// <summary>
+        /// Create a MenuControl with a semantic Action identifier.
+        /// Label comes from the localized text (for announcement), Action is language-independent.
+        /// </summary>
+        private MenuControl CreateControlWithAction(Button button, TMP_Text textField, string action)
         {
-            // Known button text labels we're looking for
-            var buttonLabels = new Dictionary<string, TMP_Text>
+            if (button == null)
+                return null;
+
+            // Get localized label for announcement
+            string label = textField != null ? TISpeechMod.CleanText(textField.text) : action;
+            if (string.IsNullOrWhiteSpace(label))
+                label = action;
+
+            var control = MenuControl.FromButton(button, label);
+            if (control != null)
             {
-                { "Continue", menuController.continueButtonText },
-                { "New Game", menuController.newGameText },
-                { "Load Game", menuController.loadGameText },
-                { "Options", menuController.optionsText },
-                { "Skirmish", menuController.skirmishModeText },
-                { "Mods", menuController.modsText },
-                { "Credits", menuController.creditsText },
-                { "Exit", menuController.exitText }
-            };
-
-            foreach (var kvp in buttonLabels)
-            {
-                string label = kvp.Key;
-                TMP_Text textField = kvp.Value;
-
-                if (textField == null)
-                    continue;
-
-                // Skip Continue if already added
-                if (label == "Continue" && controls.Exists(c => c.Label == "Continue"))
-                    continue;
-
-                // Find the button that contains this text
-                Button button = FindButtonForText(textField);
-                if (button != null)
-                {
-                    // Use the actual text content (may be localized)
-                    string actualLabel = TISpeechMod.CleanText(textField.text);
-                    if (string.IsNullOrWhiteSpace(actualLabel))
-                        actualLabel = label;
-
-                    var control = MenuControl.FromButton(button, actualLabel);
-                    if (control != null)
-                    {
-                        controls.Add(control);
-                        MelonLogger.Msg($"MainMenuScreen: Added button '{actualLabel}'");
-                    }
-                }
+                control.Action = action;
+                MelonLogger.Msg($"MainMenuScreen: Added button '{label}' with action '{action}'");
             }
+            return control;
         }
 
         private Button FindButtonForText(TMP_Text textField)
@@ -179,39 +206,35 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
                 return;
             }
 
-            // Announce what we're activating
+            // Announce what we're activating (uses localized label)
             TISpeechMod.Speak($"Activating {control.Label}", interrupt: true);
 
             // Invoke the button click
             control.Activate();
 
-            MelonLogger.Msg($"MainMenuScreen: Activated '{control.Label}'");
+            MelonLogger.Msg($"MainMenuScreen: Activated '{control.Label}' (action: {control.Action})");
 
-            // Switch to the appropriate sub-menu screen based on button label
+            // Switch to the appropriate sub-menu screen based on Action (language-independent)
             var controller = ReviewModeController.Instance;
-            if (controller != null)
+            if (controller != null && !string.IsNullOrEmpty(control.Action))
             {
-                string labelLower = control.Label.ToLower();
-
-                if (labelLower.Contains("new game") || labelLower.Contains("new campaign"))
+                switch (control.Action)
                 {
-                    controller.SwitchToMenuScreen("New Game");
-                }
-                else if (labelLower.Contains("load"))
-                {
-                    controller.SwitchToMenuScreen("Load Game");
-                }
-                else if (labelLower.Contains("option") || labelLower.Contains("settings"))
-                {
-                    controller.SwitchToMenuScreen("Options");
-                }
-                else if (labelLower.Contains("skirmish"))
-                {
-                    controller.SwitchToMenuScreen("Skirmish");
-                }
-                else if (labelLower.Contains("mod"))
-                {
-                    controller.SwitchToMenuScreen("Mods");
+                    case "NewGame":
+                        controller.SwitchToMenuScreen("New Game");
+                        break;
+                    case "LoadGame":
+                        controller.SwitchToMenuScreen("Load Game");
+                        break;
+                    case "Options":
+                        controller.SwitchToMenuScreen("Options");
+                        break;
+                    case "Skirmish":
+                        controller.SwitchToMenuScreen("Skirmish");
+                        break;
+                    case "Mods":
+                        controller.SwitchToMenuScreen("Mods");
+                        break;
                 }
             }
         }

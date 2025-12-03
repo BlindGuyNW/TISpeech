@@ -83,30 +83,42 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
             // Get the save name being deleted
             string saveName = saveList?.selectedButton?.saveInfo.name ?? "selected save";
 
-            // Find the Confirm and Cancel buttons in the delete panel
-            var deletePanel = loadController.deletePanelObject;
-            if (deletePanel == null)
-                return;
-
-            var buttons = deletePanel.GetComponentsInChildren<Button>(includeInactive: false);
-            foreach (var button in buttons)
+            // Find Confirm and Cancel buttons using known TMP_Text references (language-independent)
+            // Confirm delete button
+            if (loadController.confirmDeleteButtonText != null)
             {
-                var tmpText = button.GetComponentInChildren<TMP_Text>();
-                string label = tmpText?.text ?? button.gameObject.name;
-                label = TISpeechMod.CleanText(label);
-
-                // Try to identify Confirm vs Cancel based on text or object name
-                string buttonName = button.gameObject.name.ToLower();
-                bool isConfirm = buttonName.Contains("confirm") || buttonName.Contains("delete") ||
-                                 label.ToLower().Contains("delete");
-
-                var control = MenuControl.FromButton(button, label);
-                if (control != null)
+                var confirmButton = loadController.confirmDeleteButtonText.GetComponentInParent<Button>();
+                if (confirmButton != null && confirmButton.gameObject.activeInHierarchy)
                 {
-                    control.DetailText = isConfirm
-                        ? $"Confirm deletion of {saveName}"
-                        : "Cancel and return to save list";
-                    controls.Add(control);
+                    string label = TISpeechMod.CleanText(loadController.confirmDeleteButtonText.text);
+                    if (string.IsNullOrWhiteSpace(label)) label = "Confirm";
+
+                    var control = MenuControl.FromButton(confirmButton, label);
+                    if (control != null)
+                    {
+                        control.Action = "ConfirmDelete";
+                        control.DetailText = $"Confirm deletion of {saveName}";
+                        controls.Add(control);
+                    }
+                }
+            }
+
+            // Cancel delete button
+            if (loadController.cancelDeleteButtonText != null)
+            {
+                var cancelButton = loadController.cancelDeleteButtonText.GetComponentInParent<Button>();
+                if (cancelButton != null && cancelButton.gameObject.activeInHierarchy)
+                {
+                    string label = TISpeechMod.CleanText(loadController.cancelDeleteButtonText.text);
+                    if (string.IsNullOrWhiteSpace(label)) label = "Cancel";
+
+                    var control = MenuControl.FromButton(cancelButton, label);
+                    if (control != null)
+                    {
+                        control.Action = "CancelDelete";
+                        control.DetailText = "Cancel and return to save list";
+                        controls.Add(control);
+                    }
                 }
             }
 

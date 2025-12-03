@@ -182,23 +182,21 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
                     IsInteractable = false
                 });
 
-                // Find the Begin button by searching for button with "Begin" text
-                var buttons = skirmishController.GetComponentsInChildren<Button>(includeInactive: false);
-                foreach (var button in buttons)
+                // Find the Begin button using known TMP_Text reference (language-independent)
+                if (startController.skirmishModeBeginText != null)
                 {
-                    var tmpText = button.GetComponentInChildren<TMP_Text>();
-                    if (tmpText != null)
+                    var beginButton = startController.skirmishModeBeginText.GetComponentInParent<Button>();
+                    if (beginButton != null && beginButton.gameObject.activeInHierarchy)
                     {
-                        string text = TISpeechMod.CleanText(tmpText.text).ToLower();
-                        if (text.Contains("begin") || text.Contains("start"))
+                        string label = TISpeechMod.CleanText(startController.skirmishModeBeginText.text);
+                        if (string.IsNullOrWhiteSpace(label)) label = "Begin";
+
+                        var beginControl = MenuControl.FromButton(beginButton, label);
+                        if (beginControl != null)
                         {
-                            var beginControl = MenuControl.FromButton(button, "Begin Skirmish");
-                            if (beginControl != null)
-                            {
-                                beginControl.DetailText = "Start the skirmish battle";
-                                controls.Add(beginControl);
-                                break;
-                            }
+                            beginControl.Action = "BeginSkirmish";
+                            beginControl.DetailText = "Start the skirmish battle";
+                            controls.Add(beginControl);
                         }
                     }
                 }
