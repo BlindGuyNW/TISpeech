@@ -415,7 +415,7 @@ namespace TISpeech.ReviewMode.Readers
                         var habCopy = hab;
 
                         string tierStr = moduleTemplate.tier > 0 ? $"T{moduleTemplate.tier} " : "";
-                        string powerStr = GetModuleTemplatePowerString(moduleTemplate);
+                        string powerStr = GetModuleTemplatePowerString(moduleTemplate, hab);
                         string label = $"{tierStr}{moduleTemplate.displayName}";
 
                         // Show brief cost summary (cheapest option)
@@ -1066,12 +1066,14 @@ namespace TISpeech.ReviewMode.Readers
 
         /// <summary>
         /// Get power string for a module template.
+        /// Uses ProspectivePower when hab is provided to account for solar multiplier.
         /// </summary>
-        private string GetModuleTemplatePowerString(TIHabModuleTemplate template)
+        private string GetModuleTemplatePowerString(TIHabModuleTemplate template, TIHabState hab = null)
         {
             try
             {
-                int power = template.power;
+                // Use ProspectivePower when we have hab context - this accounts for solar multiplier
+                int power = hab != null ? template.ProspectivePower(hab) : template.power;
                 if (power > 0)
                     return $"+{power} MW";
                 else if (power < 0)
@@ -1092,8 +1094,8 @@ namespace TISpeech.ReviewMode.Readers
 
             try
             {
-                // Power
-                int power = template.power;
+                // Power - use ProspectivePower to account for solar multiplier at this location
+                int power = hab != null ? template.ProspectivePower(hab) : template.power;
                 if (power != 0)
                     sb.AppendLine($"Power: {(power > 0 ? "+" : "")}{power} MW");
 
