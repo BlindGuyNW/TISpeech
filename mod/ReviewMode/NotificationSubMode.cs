@@ -171,7 +171,10 @@ namespace TISpeech.ReviewMode
             // We check interactability at activation time instead.
 
             // Add custom delegate buttons (these are special actions like "Repeat Mission")
-            if (controller.customDelegateButton != null)
+            // Only process if the custom delegate panel is actually active
+            if (controller.customDelegateButton != null &&
+                controller.customDelegatePanelObject != null &&
+                controller.customDelegatePanelObject.activeSelf)
             {
                 for (int i = 0; i < controller.customDelegateButton.Length; i++)
                 {
@@ -195,17 +198,21 @@ namespace TISpeech.ReviewMode
                             detail = ExtractTooltipText(controller.customDelegateTooltip[i]);
                         }
 
-                        if (!string.IsNullOrEmpty(label))
+                        // Skip empty labels or Unity editor placeholder text
+                        // Placeholder patterns like "CUSTOM BUTTON 6 TXT" are not localized game text
+                        if (string.IsNullOrEmpty(label) || IsUnityPlaceholder(label))
                         {
-                            Options.Add(new NotificationOption
-                            {
-                                Label = label,
-                                Button = button,
-                                DetailText = detail,
-                                IsNarrativeOption = false
-                            });
-                            MelonLogger.Msg($"Added custom delegate button: {label}");
+                            continue;
                         }
+
+                        Options.Add(new NotificationOption
+                        {
+                            Label = label,
+                            Button = button,
+                            DetailText = detail,
+                            IsNarrativeOption = false
+                        });
+                        MelonLogger.Msg($"Added custom delegate button: {label}");
                     }
                 }
             }
@@ -306,6 +313,26 @@ namespace TISpeech.ReviewMode
                 MelonLogger.Error($"Error extracting tooltip: {ex.Message}");
                 return "";
             }
+        }
+
+        /// <summary>
+        /// Detects Unity editor placeholder text that wasn't replaced with real content.
+        /// These are developer placeholders, not localized strings.
+        /// Examples: "CUSTOM BUTTON 6 TXT", "Custom 1 txt", "Button Text"
+        /// </summary>
+        private static bool IsUnityPlaceholder(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return true;
+
+            string upper = text.Trim().ToUpperInvariant();
+
+            // Pattern: contains "CUSTOM" and "TXT" - Unity editor placeholders
+            // e.g., "CUSTOM BUTTON 6 TXT", "Custom 1 txt", "TXT CUSTOM"
+            if (upper.Contains("CUSTOM") && upper.Contains("TXT"))
+                return true;
+
+            return false;
         }
 
         public void Next()
