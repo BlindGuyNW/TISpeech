@@ -25,6 +25,28 @@ namespace TISpeech.ReviewMode.Readers
         /// </summary>
         public Action<string, bool> OnSpeak { get; set; }
 
+        /// <summary>
+        /// Callback for executing a simple fleet operation (undock, cancel, clear homeport, merge all).
+        /// Parameters: fleet, operation type
+        /// </summary>
+        public Action<TISpaceFleetState, Type> OnExecuteSimpleOperation { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a homeport from available habs.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectHomeport { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a fleet to merge with.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectMergeTarget { get; set; }
+
+        /// <summary>
+        /// Callback for executing a maintenance operation (resupply, repair).
+        /// Parameters: fleet, operation type
+        /// </summary>
+        public Action<TISpaceFleetState, Type> OnExecuteMaintenanceOperation { get; set; }
+
         public string ReadSummary(TISpaceFleetState fleet)
         {
             if (fleet == null)
@@ -221,6 +243,27 @@ namespace TISpeech.ReviewMode.Readers
                 if (transferSection != null)
                 {
                     sections.Add(transferSection);
+                }
+
+                // Fleet Management section (Undock, Merge, Cancel)
+                var mgmtSection = CreateFleetManagementSection(fleet);
+                if (mgmtSection != null)
+                {
+                    sections.Add(mgmtSection);
+                }
+
+                // Homeport section
+                var homeportSection = CreateHomeportSection(fleet);
+                if (homeportSection != null)
+                {
+                    sections.Add(homeportSection);
+                }
+
+                // Maintenance section (Resupply, Repair)
+                var maintenanceSection = CreateMaintenanceSection(fleet);
+                if (maintenanceSection != null)
+                {
+                    sections.Add(maintenanceSection);
                 }
             }
 
@@ -582,6 +625,344 @@ namespace TISpeech.ReviewMode.Readers
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Create the Fleet Management section with Undock, Merge, and Cancel operations.
+        /// </summary>
+        private ISection CreateFleetManagementSection(TISpaceFleetState fleet)
+        {
+            var section = new DataSection("Fleet Management");
+            var fleetCopy = fleet; // Capture for closures
+
+            try
+            {
+                // Undock From Station
+                if (fleet.dockedAtStation)
+                {
+                    var undockOp = GetFleetOperation<UndockFromStationOperation>();
+                    if (undockOp != null && undockOp.OpVisibleToActor(fleet))
+                    {
+                        bool canUndock = undockOp.ActorCanPerformOperation(fleet, fleet);
+                        string status = canUndock ? "Undock from current station" : GetUndockBlockedReason(fleet);
+
+                        section.AddItem("Undock From Station", status,
+                            onActivate: canUndock ? () => OnExecuteSimpleOperation?.Invoke(fleetCopy, typeof(UndockFromStationOperation)) : null);
+                    }
+                }
+
+                // Merge Fleet - find other fleets we can merge with
+                var mergeOp = GetFleetOperation<MergeFleetOperation>();
+                if (mergeOp != null && mergeOp.OpVisibleToActor(fleet))
+                {
+                    var mergeableFleets = GetMergeableFleets(fleet);
+                    if (mergeableFleets.Count > 0)
+                    {
+                        bool canMerge = !fleet.inCombatOrWaitingForCombat && mergeableFleets.Count > 0;
+                        string mergeStatus = canMerge
+                            ? $"{mergeableFleets.Count} fleet{(mergeableFleets.Count != 1 ? "s" : "")} available to merge"
+                            : "No fleets available to merge";
+
+                        section.AddItem("Merge Fleet", mergeStatus,
+                            onActivate: canMerge ? () => OnSelectMergeTarget?.Invoke(fleetCopy) : null);
+                    }
+
+                    // Merge All Fleets - if multiple fleets at same location
+                    if (mergeableFleets.Count > 1)
+                    {
+                        var mergeAllOp = GetFleetOperation<MergeAllFleetOperation>();
+                        if (mergeAllOp != null)
+                        {
+                            section.AddItem("Merge All Fleets", $"Merge all {mergeableFleets.Count + 1} fleets at this location",
+                                onActivate: () => OnExecuteSimpleOperation?.Invoke(fleetCopy, typeof(MergeAllFleetOperation)));
+                        }
+                    }
+                }
+
+                // Cancel Operation - if fleet has active operations
+                if (fleet.currentOperations != null && fleet.currentOperations.Count > 0)
+                {
+                    var cancelOp = GetFleetOperation<CancelFleetOperation>();
+                    if (cancelOp != null)
+                    {
+                        var currentOp = fleet.currentOperations.FirstOrDefault();
+                        string opName = currentOp?.operation?.GetDisplayName() ?? "current operation";
+                        section.AddItem("Cancel Operation", $"Cancel {opName}",
+                            onActivate: () => OnExecuteSimpleOperation?.Invoke(fleetCopy, typeof(CancelFleetOperation)));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error creating Fleet Management section: {ex.Message}");
+            }
+
+            // Only return section if it has items
+            return section.ItemCount > 0 ? section : null;
+        }
+
+        /// <summary>
+        /// Create the Homeport section for setting/clearing fleet homeport.
+        /// </summary>
+        private ISection CreateHomeportSection(TISpaceFleetState fleet)
+        {
+            var section = new DataSection("Homeport");
+            var fleetCopy = fleet; // Capture for closures
+
+            try
+            {
+                // Current homeport
+                string currentHomeport = fleet.homeport?.displayName ?? "None";
+                section.AddItem("Current", currentHomeport);
+
+                // Set Homeport - select from faction's habs
+                var setHomeportOp = GetFleetOperation<SetHomeportOperation>();
+                if (setHomeportOp != null)
+                {
+                    var availableHabs = GetHomeportOptions(fleet);
+                    if (availableHabs.Count > 0)
+                    {
+                        section.AddItem("Set Homeport", $"{availableHabs.Count} station{(availableHabs.Count != 1 ? "s" : "")} available",
+                            onActivate: () => OnSelectHomeport?.Invoke(fleetCopy));
+                    }
+                    else
+                    {
+                        section.AddItem("Set Homeport", "No stations available");
+                    }
+                }
+
+                // Clear Homeport - only if one is set
+                if (fleet.homeport != null)
+                {
+                    var clearHomeportOp = GetFleetOperation<ClearHomeportOperation>();
+                    if (clearHomeportOp != null)
+                    {
+                        section.AddItem("Clear Homeport", $"Remove {fleet.homeport.displayName} as homeport",
+                            onActivate: () => OnExecuteSimpleOperation?.Invoke(fleetCopy, typeof(ClearHomeportOperation)));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error creating Homeport section: {ex.Message}");
+            }
+
+            return section;
+        }
+
+        /// <summary>
+        /// Create the Maintenance section for Resupply and Repair operations.
+        /// </summary>
+        private ISection CreateMaintenanceSection(TISpaceFleetState fleet)
+        {
+            var section = new DataSection("Maintenance");
+            var fleetCopy = fleet; // Capture for closures
+
+            try
+            {
+                bool needsRefuel = fleet.NeedsRefuel();
+                bool needsRearm = fleet.NeedsRearm();
+                bool needsRepair = fleet.NeedsRepair();
+
+                // If nothing needed, just show status
+                if (!needsRefuel && !needsRearm && !needsRepair)
+                {
+                    section.AddItem("Status", "Fleet is fully supplied and repaired");
+                    return section;
+                }
+
+                // Show what's needed
+                var needs = new List<string>();
+                if (needsRefuel) needs.Add("refuel");
+                if (needsRearm) needs.Add("rearm");
+                if (needsRepair) needs.Add("repair");
+                section.AddItem("Needs", string.Join(", ", needs));
+
+                // Check if docked (required for maintenance)
+                if (!fleet.dockedAtHab)
+                {
+                    section.AddItem("Status", "Must dock at a station for maintenance");
+                    return section;
+                }
+
+                // Resupply operation (refuel + rearm)
+                if (needsRefuel || needsRearm)
+                {
+                    var resupplyOp = GetFleetOperation<ResupplyOperation>();
+                    if (resupplyOp != null && resupplyOp.OpVisibleToActor(fleet))
+                    {
+                        bool canResupply = resupplyOp.ActorCanPerformOperation(fleet, fleet);
+                        string costStr = GetOperationCostString(fleet, resupplyOp);
+                        string status = canResupply ? costStr : "Cannot resupply here";
+
+                        section.AddItem("Resupply", status,
+                            onActivate: canResupply ? () => OnExecuteMaintenanceOperation?.Invoke(fleetCopy, typeof(ResupplyOperation)) : null);
+                    }
+                }
+
+                // Repair operation
+                if (needsRepair)
+                {
+                    var repairOp = GetFleetOperation<RepairFleetOperation>();
+                    if (repairOp != null && repairOp.OpVisibleToActor(fleet))
+                    {
+                        bool canRepair = repairOp.ActorCanPerformOperation(fleet, fleet);
+                        string costStr = GetOperationCostString(fleet, repairOp);
+                        string status = canRepair ? costStr : "Cannot repair here";
+
+                        // Check if hab can fully repair
+                        if (canRepair && fleet.ref_hab != null)
+                        {
+                            if (!fleet.ref_hab.CanFullyRepairFleet(fleet))
+                            {
+                                status += " (partial repair only)";
+                            }
+                        }
+
+                        section.AddItem("Repair", status,
+                            onActivate: canRepair ? () => OnExecuteMaintenanceOperation?.Invoke(fleetCopy, typeof(RepairFleetOperation)) : null);
+                    }
+                }
+
+                // Resupply & Repair combined (if both needed)
+                if ((needsRefuel || needsRearm) && needsRepair)
+                {
+                    var combinedOp = GetFleetOperation<ResupplyAndRepairOperation>();
+                    if (combinedOp != null && combinedOp.OpVisibleToActor(fleet))
+                    {
+                        bool canDoBoth = combinedOp.ActorCanPerformOperation(fleet, fleet);
+                        string costStr = GetOperationCostString(fleet, combinedOp);
+                        string status = canDoBoth ? costStr : "Cannot do both here";
+
+                        section.AddItem("Resupply & Repair", status,
+                            onActivate: canDoBoth ? () => OnExecuteMaintenanceOperation?.Invoke(fleetCopy, typeof(ResupplyAndRepairOperation)) : null);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error creating Maintenance section: {ex.Message}");
+            }
+
+            return section.ItemCount > 0 ? section : null;
+        }
+
+        /// <summary>
+        /// Get a formatted cost string for an operation.
+        /// </summary>
+        private string GetOperationCostString(TISpaceFleetState fleet, TISpaceFleetOperationTemplate operation)
+        {
+            try
+            {
+                var costs = operation.ResourceCostOptions(fleet.faction, fleet, fleet, checkCanAfford: false);
+                if (costs != null && costs.Count > 0 && costs[0].anyDebit)
+                {
+                    // Get the duration
+                    float duration = costs[0].completionTime_days;
+                    string durationStr = duration > 0 ? $", {duration:F1} days" : "";
+
+                    // Get cost string - use the game's formatting
+                    string costStr = costs[0].ToString("Relevant", false, false, fleet.faction);
+                    costStr = TISpeechMod.CleanText(costStr);
+
+                    return $"{costStr}{durationStr}";
+                }
+                return "No cost";
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error getting operation cost: {ex.Message}");
+                return "Cost unknown";
+            }
+        }
+
+        /// <summary>
+        /// Get a fleet operation template by type.
+        /// </summary>
+        private T GetFleetOperation<T>() where T : TISpaceFleetOperationTemplate
+        {
+            try
+            {
+                if (OperationsManager.operationsLookup.TryGetValue(typeof(T), out var op))
+                {
+                    return op as T;
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Could not get operation {typeof(T).Name}: {ex.Message}");
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Get the reason why a fleet cannot undock.
+        /// </summary>
+        private string GetUndockBlockedReason(TISpaceFleetState fleet)
+        {
+            if (!fleet.dockedAtStation)
+                return "Not docked at a station";
+            if (fleet.inCombatOrWaitingForCombat)
+                return "In combat";
+            if (fleet.transferAssigned)
+                return "Transfer already assigned";
+            if (!fleet.allShipsHaveDeltaV)
+                return "Some ships have no delta-V";
+            if (!fleet.allShipsCanManeuver)
+                return "Some ships cannot maneuver";
+            return "Cannot undock";
+        }
+
+        /// <summary>
+        /// Get list of fleets that can be merged with this fleet.
+        /// </summary>
+        public static List<TISpaceFleetState> GetMergeableFleets(TISpaceFleetState fleet)
+        {
+            var result = new List<TISpaceFleetState>();
+            if (fleet?.faction == null)
+                return result;
+
+            try
+            {
+                foreach (var otherFleet in fleet.faction.fleets)
+                {
+                    if (otherFleet != fleet && fleet.CanMerge(otherFleet))
+                    {
+                        result.Add(otherFleet);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error getting mergeable fleets: {ex.Message}");
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Get list of habs that can be set as homeport.
+        /// </summary>
+        public static List<TIHabState> GetHomeportOptions(TISpaceFleetState fleet)
+        {
+            var result = new List<TIHabState>();
+            if (fleet?.faction == null)
+                return result;
+
+            try
+            {
+                // Faction's own habs
+                if (fleet.faction.habs != null)
+                {
+                    result.AddRange(fleet.faction.habs);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error getting homeport options: {ex.Message}");
+            }
+
+            return result;
         }
 
         #endregion

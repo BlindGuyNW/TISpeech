@@ -252,9 +252,13 @@ namespace TISpeech.ReviewMode.Screens
             if (index == cachedItemIndex && cachedSections.Count > 0)
                 return cachedSections;
 
-            // Wire up callbacks for transfer planning
+            // Wire up callbacks for fleet operations
             fleetReader.OnEnterTransferMode = OnEnterTransferMode;
             fleetReader.OnSpeak = OnSpeak;
+            fleetReader.OnExecuteSimpleOperation = OnExecuteSimpleOperation;
+            fleetReader.OnSelectHomeport = OnSelectHomeport;
+            fleetReader.OnSelectMergeTarget = OnSelectMergeTarget;
+            fleetReader.OnExecuteMaintenanceOperation = OnExecuteMaintenanceOperation;
 
             var fleet = items[index];
             cachedItemIndex = index;
@@ -267,6 +271,26 @@ namespace TISpeech.ReviewMode.Screens
         /// Callback for entering transfer planning mode.
         /// </summary>
         public Action<TISpaceFleetState> OnEnterTransferMode { get; set; }
+
+        /// <summary>
+        /// Callback for executing a simple fleet operation (undock, cancel, clear homeport, merge all).
+        /// </summary>
+        public Action<TISpaceFleetState, Type> OnExecuteSimpleOperation { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a homeport for a fleet.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectHomeport { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a fleet to merge with.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectMergeTarget { get; set; }
+
+        /// <summary>
+        /// Callback for executing a maintenance operation (resupply, repair).
+        /// </summary>
+        public Action<TISpaceFleetState, Type> OnExecuteMaintenanceOperation { get; set; }
 
         public override string GetItemSortName(int index)
         {
