@@ -42,6 +42,7 @@ namespace TISpeech.ReviewMode
         private FactionIntelScreen factionIntelScreen;
         private AlienThreatScreen alienThreatScreen;
         private GlobalStatusScreen globalStatusScreen;
+        private LedgerScreen ledgerScreen;
 
         // Selection sub-mode (for multi-step actions like mission assignment)
         private SelectionSubMode selectionMode = null;
@@ -184,6 +185,10 @@ namespace TISpeech.ReviewMode
             globalStatusScreen = new GlobalStatusScreen();
             globalStatusScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
+            ledgerScreen = new LedgerScreen();
+            ledgerScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            ledgerScreen.OnSectionsInvalidated = () => navigation.RefreshSections();
+
             // Register in-game screens with navigation
             var screens = new List<ScreenBase>
             {
@@ -197,7 +202,8 @@ namespace TISpeech.ReviewMode
                 shipClassesScreen,
                 factionIntelScreen,
                 alienThreatScreen,
-                globalStatusScreen
+                globalStatusScreen,
+                ledgerScreen
             };
 
             navigation.RegisterScreens(screens);
