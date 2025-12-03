@@ -165,6 +165,9 @@ namespace TISpeech.ReviewMode.Screens
             councilorReader.OnApplyAugmentation = StartAugmentation;
             councilorReader.OnManageOrg = StartManageOrg;
             councilorReader.OnAcquireOrg = StartAcquireOrg;
+            councilorReader.OnDismissCouncilor = StartDismissCouncilor;
+            councilorReader.OnAbortMission = StartAbortMission;
+            councilorReader.OnSetAutofailValue = ExecuteSetAutofailValue;
             recruitReader.OnRecruit = ExecuteRecruitment;
         }
 
@@ -1119,6 +1122,254 @@ namespace TISpeech.ReviewMode.Screens
             }
             catch { }
             return "Cost unknown";
+        }
+
+        #endregion
+
+        #region Dismiss Councilor
+
+        private void StartDismissCouncilor(TICouncilorState councilor, bool keepOrgs)
+        {
+            try
+            {
+                var faction = GameControl.control?.activePlayer;
+                if (faction == null || councilor == null)
+                {
+                    OnSpeak?.Invoke("Cannot dismiss: invalid state", true);
+                    return;
+                }
+
+                // Check if this is a turned enemy councilor
+                bool isTurnedEnemy = councilor.agentForFaction == faction && councilor.faction != faction;
+
+                string actionDescription;
+                string details;
+
+                if (isTurnedEnemy)
+                {
+                    actionDescription = $"Release {councilor.displayName}";
+                    details = $"This turned councilor will return to {councilor.faction?.displayName ?? "their faction"}";
+                }
+                else
+                {
+                    int orgCount = councilor.orgs?.Count ?? 0;
+                    if (orgCount > 0)
+                    {
+                        if (keepOrgs)
+                        {
+                            actionDescription = $"Dismiss {councilor.displayName} (Keep Orgs)";
+                            details = $"{orgCount} organization(s) will be moved to faction pool";
+                        }
+                        else
+                        {
+                            string saleValue = GetOrgsSaleValueString(councilor);
+                            actionDescription = $"Dismiss {councilor.displayName} (Sell Orgs)";
+                            details = $"{orgCount} organization(s) will be sold for {saleValue}";
+                        }
+                    }
+                    else
+                    {
+                        actionDescription = $"Dismiss {councilor.displayName}";
+                        details = "This councilor will be removed from your council";
+                    }
+                }
+
+                ConfirmationHelper.RequestConfirmation(
+                    actionDescription,
+                    details,
+                    OnEnterSelectionMode,
+                    onConfirm: () => PerformDismissCouncilor(councilor, keepOrgs),
+                    onCancel: () => OnSpeak?.Invoke("Dismissal cancelled", true)
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error initiating dismiss: {ex.Message}");
+                OnSpeak?.Invoke("Error initiating dismissal", true);
+            }
+        }
+
+        private void PerformDismissCouncilor(TICouncilorState councilor, bool keepOrgs)
+        {
+            try
+            {
+                var faction = GameControl.control?.activePlayer;
+                if (faction == null) return;
+
+                // Check if this is a turned enemy councilor
+                bool isTurnedEnemy = councilor.agentForFaction == faction && councilor.faction != faction;
+                TIFactionState councilorFaction = councilor.faction;
+
+                if (isTurnedEnemy)
+                {
+                    // For turned enemy, just dismiss - orgs stay with the enemy faction
+                    var action = new DismissCouncilorAction(councilor, councilorFaction, faction);
+                    faction.playerControl.StartAction(action);
+
+                    OnSpeak?.Invoke($"Released {councilor.displayName} back to {councilorFaction?.displayName ?? "their faction"}", true);
+                }
+                else
+                {
+                    // For our own councilor
+                    if (!keepOrgs && councilor.orgs != null && councilor.orgs.Count > 0)
+                    {
+                        // Sell all orgs first
+                        foreach (var org in councilor.orgs.ToList())
+                        {
+                            var sellAction = new SellOrgAction(org, faction, councilor);
+                            faction.playerControl.StartAction(sellAction);
+                        }
+                    }
+                    else if (keepOrgs && councilor.orgs != null && councilor.orgs.Count > 0)
+                    {
+                        // Move all orgs to pool first
+                        foreach (var org in councilor.orgs.ToList())
+                        {
+                            var poolAction = new TransferOrgToFactionPoolAction(org, councilor);
+                            faction.playerControl.StartAction(poolAction);
+                        }
+                    }
+
+                    // Then dismiss the councilor
+                    var dismissAction = new DismissCouncilorAction(councilor, faction, faction);
+                    faction.playerControl.StartAction(dismissAction);
+
+                    OnSpeak?.Invoke($"Dismissed {councilor.displayName}", true);
+                }
+
+                MelonLogger.Msg($"Dismissed councilor: {councilor.displayName}");
+
+                // Refresh to show updated state
+                Refresh();
+                cachedItemIndex = -1;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error dismissing councilor: {ex.Message}");
+                OnSpeak?.Invoke("Error dismissing councilor", true);
+            }
+        }
+
+        private string GetOrgsSaleValueString(TICouncilorState councilor)
+        {
+            try
+            {
+                var saleValue = councilor.AllOrgsSaleValue;
+                return TISpeechMod.CleanText(saleValue.ToString("N0"));
+            }
+            catch
+            {
+                return "unknown value";
+            }
+        }
+
+        #endregion
+
+        #region Abort Mission
+
+        private void StartAbortMission(TICouncilorState councilor)
+        {
+            try
+            {
+                if (councilor == null || !councilor.HasMission)
+                {
+                    OnSpeak?.Invoke("No mission to abort", true);
+                    return;
+                }
+
+                if (TIMissionPhaseState.InMissionPhase())
+                {
+                    OnSpeak?.Invoke("Cannot abort mission during mission phase", true);
+                    return;
+                }
+
+                string missionName = councilor.activeMission?.missionTemplate?.displayName ?? "mission";
+                string targetName = councilor.activeMission?.target?.displayName ?? "";
+
+                string actionDescription = $"Abort {missionName}";
+                string details = !string.IsNullOrEmpty(targetName)
+                    ? $"Cancel mission targeting {targetName}"
+                    : "Cancel the current mission assignment";
+
+                ConfirmationHelper.RequestConfirmation(
+                    actionDescription,
+                    details,
+                    OnEnterSelectionMode,
+                    onConfirm: () => PerformAbortMission(councilor),
+                    onCancel: () => OnSpeak?.Invoke("Abort cancelled", true)
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error initiating abort: {ex.Message}");
+                OnSpeak?.Invoke("Error initiating abort", true);
+            }
+        }
+
+        private void PerformAbortMission(TICouncilorState councilor)
+        {
+            try
+            {
+                var faction = councilor.faction;
+                if (faction == null || !councilor.HasMission) return;
+
+                string missionName = councilor.activeMission?.missionTemplate?.displayName ?? "mission";
+
+                var action = new AbortMission(councilor, false, TIMissionState.AbortReason.VoluntaryAbort);
+                faction.playerControl.StartAction(action);
+
+                OnSpeak?.Invoke($"Aborted {missionName} for {councilor.displayName}", true);
+                MelonLogger.Msg($"Aborted mission: {councilor.displayName} - {missionName}");
+
+                // Refresh to show updated state
+                Refresh();
+                cachedItemIndex = -1;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error aborting mission: {ex.Message}");
+                OnSpeak?.Invoke("Error aborting mission", true);
+            }
+        }
+
+        #endregion
+
+        #region Autofail Value
+
+        private void ExecuteSetAutofailValue(TICouncilorState councilor, float newValue)
+        {
+            try
+            {
+                var faction = GameControl.control?.activePlayer;
+                if (faction == null || councilor == null)
+                {
+                    OnSpeak?.Invoke("Cannot set autofail value: invalid state", true);
+                    return;
+                }
+
+                // Verify this is a turned councilor we control
+                if (councilor.agentForFaction != faction)
+                {
+                    OnSpeak?.Invoke("This is not a turned councilor under your control", true);
+                    return;
+                }
+
+                var action = new SetAutofailValueForTurnedCouncilorAction(councilor, newValue);
+                faction.playerControl.StartAction(action);
+
+                string percentStr = $"{(newValue * 100):F0}%";
+                OnSpeak?.Invoke($"Set mission failure rate to {percentStr} for {councilor.displayName}", true);
+                MelonLogger.Msg($"Set autofail value: {councilor.displayName} = {percentStr}");
+
+                // Refresh to show updated state
+                Refresh();
+                cachedItemIndex = -1;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error setting autofail value: {ex.Message}");
+                OnSpeak?.Invoke("Error setting mission failure rate", true);
+            }
         }
 
         #endregion

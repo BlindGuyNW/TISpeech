@@ -41,6 +41,23 @@ namespace TISpeech.ReviewMode.Readers
         /// </summary>
         public Action<TICouncilorState> OnAcquireOrg { get; set; }
 
+        /// <summary>
+        /// Callback for dismissing a councilor.
+        /// Parameters: councilor, keepOrgs (true to move orgs to pool, false to sell)
+        /// </summary>
+        public Action<TICouncilorState, bool> OnDismissCouncilor { get; set; }
+
+        /// <summary>
+        /// Callback for aborting/canceling an active mission.
+        /// </summary>
+        public Action<TICouncilorState> OnAbortMission { get; set; }
+
+        /// <summary>
+        /// Callback for setting autofail value for turned councilors.
+        /// Parameters: councilor, new value (0.0 to 1.0)
+        /// </summary>
+        public Action<TICouncilorState, float> OnSetAutofailValue { get; set; }
+
         public string ReadSummary(TICouncilorState councilor)
         {
             return ReadSummary(councilor, null);
@@ -395,6 +412,13 @@ namespace TISpeech.ReviewMode.Readers
             // ACTION SECTIONS - Only for own councilors!
             if (isOwn)
             {
+                // Status section (if detained or turned)
+                var statusSection = BuildStatusSection(councilor, viewer);
+                if (statusSection != null && statusSection.ItemCount > 0)
+                {
+                    sections.Add(statusSection);
+                }
+
                 // Missions section (actionable)
                 var missionsSection = BuildMissionsSection(councilor);
                 if (missionsSection.ItemCount > 0)
@@ -416,6 +440,13 @@ namespace TISpeech.ReviewMode.Readers
                 if (xpSection.ItemCount > 0)
                 {
                     sections.Add(xpSection);
+                }
+
+                // Councilor Actions section (Dismiss, Abort Mission)
+                var actionsSection = BuildActionsSection(councilor, viewer);
+                if (actionsSection != null && actionsSection.ItemCount > 0)
+                {
+                    sections.Add(actionsSection);
                 }
             }
 
@@ -700,6 +731,189 @@ namespace TISpeech.ReviewMode.Readers
             }
 
             return xpSection;
+        }
+
+        private DataSection BuildStatusSection(TICouncilorState councilor, TIFactionState viewer)
+        {
+            var statusSection = new DataSection("Status");
+            var activePlayer = GameControl.control?.activePlayer;
+
+            try
+            {
+                // Check for detained status
+                if (councilor.detained)
+                {
+                    string detainInfo;
+                    if (councilor.detainingFaction == councilor.faction)
+                    {
+                        // Self-detained (protective custody)
+                        detainInfo = $"In protective custody until {councilor.detainedReleaseDate?.ToCustomDateString() ?? "unknown"}";
+                    }
+                    else
+                    {
+                        detainInfo = $"Detained by {councilor.detainingFaction?.displayName ?? "unknown"} until {councilor.detainedReleaseDate?.ToCustomDateString() ?? "unknown"}";
+                    }
+                    statusSection.AddItem("Detained", detainInfo);
+                }
+
+                // Check for turned status
+                if (councilor.turned)
+                {
+                    if (councilor.agentForFaction == activePlayer)
+                    {
+                        // This is an enemy councilor we've turned - show as "Turned (ours)"
+                        statusSection.AddItem("Turned", $"Working for us against {councilor.faction?.displayName ?? "their faction"}");
+
+                        // Show and allow setting the autofail slider
+                        float currentAutofail = councilor.autofailMissionsValue;
+                        string autofailPercent = $"{(currentAutofail * 100):F0}%";
+                        statusSection.AddItem("Mission Failure Rate", autofailPercent,
+                            "Controls how often this turned councilor fails their missions. Higher values make them fail more often but may arouse suspicion.",
+                            onActivate: () =>
+                            {
+                                // Cycle through common values: 0%, 25%, 50%, 75%, 100%
+                                float[] options = { 0f, 0.25f, 0.5f, 0.75f, 1.0f };
+                                int currentIndex = 0;
+                                for (int i = 0; i < options.Length; i++)
+                                {
+                                    if (Math.Abs(options[i] - currentAutofail) < 0.01f)
+                                    {
+                                        currentIndex = i;
+                                        break;
+                                    }
+                                }
+                                int nextIndex = (currentIndex + 1) % options.Length;
+                                OnSetAutofailValue?.Invoke(councilor, options[nextIndex]);
+                            });
+                    }
+                    else if (councilor.faction == activePlayer)
+                    {
+                        // Our councilor has been turned by someone else - show as "Traitor"
+                        statusSection.AddItem("Traitor", $"Working for {councilor.agentForFaction?.displayName ?? "unknown faction"}");
+                    }
+                }
+
+                // Show who is tracking this councilor
+                if (councilor.knowsIveBeenSeenBy != null && councilor.knowsIveBeenSeenBy.Count > 0)
+                {
+                    var trackers = councilor.knowsIveBeenSeenBy.Select(f => f.displayName).ToList();
+                    statusSection.AddItem("Being Tracked By", string.Join(", ", trackers),
+                        "These factions have used Investigate Councilor on this agent and we detected them");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error building status section: {ex.Message}");
+            }
+
+            return statusSection.ItemCount > 0 ? statusSection : null;
+        }
+
+        private DataSection BuildActionsSection(TICouncilorState councilor, TIFactionState viewer)
+        {
+            var actionsSection = new DataSection("Councilor Actions");
+            var activePlayer = GameControl.control?.activePlayer;
+
+            try
+            {
+                // Abort Mission - only if councilor has a mission and we're not in mission phase
+                if (councilor.HasMission && !TIMissionPhaseState.InMissionPhase())
+                {
+                    var councilorCopy = councilor;
+                    string missionName = councilor.activeMission?.missionTemplate?.displayName ?? "mission";
+                    actionsSection.AddItem($"Abort Mission: {missionName}",
+                        "Cancel the currently assigned mission",
+                        onActivate: () =>
+                        {
+                            OnAbortMission?.Invoke(councilorCopy);
+                        });
+                }
+
+                // Dismiss Councilor - check if allowed
+                // Can dismiss if:
+                // 1. Not in mission phase and no save-blocking prompts
+                // 2. Either this is our councilor OR this is a turned enemy councilor (agentForFaction == us)
+                bool canDismiss = !GameStateManager.AllFactions().Any(f => f.planningMissions) &&
+                                  !TIPromptQueueState.ActivePlayerHasSaveBlockingPrompt() &&
+                                  !councilor.detained;
+
+                if (canDismiss)
+                {
+                    // Check if this is a turned enemy councilor we control
+                    bool isTurnedEnemy = councilor.agentForFaction == activePlayer && councilor.faction != activePlayer;
+
+                    if (isTurnedEnemy)
+                    {
+                        // Dismiss a turned enemy councilor
+                        var councilorCopy = councilor;
+                        actionsSection.AddItem("Dismiss Turned Councilor",
+                            $"Release {councilor.displayName} back to {councilor.faction?.displayName ?? "their faction"}",
+                            onActivate: () =>
+                            {
+                                OnDismissCouncilor?.Invoke(councilorCopy, true); // keepOrgs doesn't matter for enemy
+                            });
+                    }
+                    else if (councilor.faction == activePlayer)
+                    {
+                        // Dismiss our own councilor
+                        int orgCount = councilor.orgs?.Count ?? 0;
+                        var councilorCopy = councilor;
+
+                        if (orgCount > 0)
+                        {
+                            // Has orgs - offer keep or sell options
+                            string orgSaleValue = GetOrgsSaleValueString(councilor);
+
+                            actionsSection.AddItem("Dismiss (Keep Orgs)",
+                                $"Fire {councilor.displayName} and move {orgCount} org(s) to faction pool",
+                                onActivate: () =>
+                                {
+                                    OnDismissCouncilor?.Invoke(councilorCopy, true);
+                                });
+
+                            actionsSection.AddItem("Dismiss (Sell Orgs)",
+                                $"Fire {councilor.displayName} and sell {orgCount} org(s) for {orgSaleValue}",
+                                onActivate: () =>
+                                {
+                                    OnDismissCouncilor?.Invoke(councilorCopy, false);
+                                });
+                        }
+                        else
+                        {
+                            // No orgs - simple dismiss
+                            actionsSection.AddItem("Dismiss Councilor",
+                                $"Fire {councilor.displayName} from the council",
+                                onActivate: () =>
+                                {
+                                    OnDismissCouncilor?.Invoke(councilorCopy, true);
+                                });
+                        }
+                    }
+                }
+                else if (councilor.detained)
+                {
+                    actionsSection.AddItem("Cannot Dismiss", "Councilor is detained");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error building actions section: {ex.Message}");
+            }
+
+            return actionsSection.ItemCount > 0 ? actionsSection : null;
+        }
+
+        private string GetOrgsSaleValueString(TICouncilorState councilor)
+        {
+            try
+            {
+                var saleValue = councilor.AllOrgsSaleValue;
+                return TISpeechMod.CleanText(saleValue.ToString("N0"));
+            }
+            catch
+            {
+                return "unknown value";
+            }
         }
     }
 }
