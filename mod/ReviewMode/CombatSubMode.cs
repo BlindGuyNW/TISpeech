@@ -624,24 +624,41 @@ namespace TISpeech.ReviewMode
             var sb = new StringBuilder();
             sb.Append("Space Combat. ");
 
-            // Fleet info
+            // Fleet info with names and combat values
             var ourFleet = combat.FleetFor(player);
             var theirFleet = combat.FleetAgainst(player);
 
-            if (ourFleet != null && theirFleet != null)
+            if (ourFleet != null)
             {
-                sb.Append($"Your fleet: {ourFleet.ships.Count} ships. ");
-                sb.Append($"Enemy fleet: {theirFleet.ships.Count} ships. ");
+                string ourName = ourFleet.GetDisplayName(player);
+                int ourShips = ourFleet.ships?.Count ?? 0;
+                float ourStrength = ourFleet.SpaceCombatValue();
+                sb.Append($"Your fleet {ourName}: {ourShips} ships, combat value {ourStrength:F0}. ");
             }
-            else if (theirFleet != null)
+
+            if (theirFleet != null)
             {
-                sb.Append($"Enemy fleet: {theirFleet.ships.Count} ships. ");
+                string theirFaction = theirFleet.faction?.displayName ?? "Unknown";
+                string theirName = theirFleet.GetDisplayName(player);
+                int theirShips = theirFleet.ships?.Count ?? 0;
+                float theirStrength = player.GetPerceivedEnemyFleetStrength(theirFleet);
+                sb.Append($"Enemy {theirFaction} fleet {theirName}: {theirShips} ships, estimated combat value {theirStrength:F0}. ");
             }
 
             // Hab info
             if (combat.hab != null)
             {
-                sb.Append($"At {combat.hab.GetDisplayName(player)}. ");
+                string habName = combat.hab.GetDisplayName(player);
+                string habFaction = combat.hab.faction?.displayName ?? "Unknown";
+                float habStrength = combat.hab.SpaceCombatValue();
+                if (habStrength > 0)
+                {
+                    sb.Append($"Station {habName} ({habFaction}) with combat value {habStrength:F0}. ");
+                }
+                else
+                {
+                    sb.Append($"At {habName}. ");
+                }
             }
 
             // Phase info
@@ -775,40 +792,33 @@ namespace TISpeech.ReviewMode
 
         /// <summary>
         /// Check if we're currently in a pre-combat state.
+        /// Simple check: is the PrecombatController visible?
         /// </summary>
         public static bool IsInPreCombat()
         {
             try
             {
-                var combat = TISpaceCombatState.CurrentActiveCombat;
-                if (combat == null) return false;
-
-                // If combat is active (live battle), we're not in pre-combat
-                if (combat.active) return false;
-
-                var player = GameControl.control?.activePlayer;
-                if (player == null) return false;
-
-                // Check if player is involved
-                if (!combat.factions.Contains(player)) return false;
-
-                // We're in pre-combat if stances aren't selected, bidding isn't done, or resolution isn't chosen
-                if (!combat.HaveStancesBeenSelected) return true;
-                if (combat.requiresBidding && !combat.HaveBidsBeenSubmitted) return true;
-
-                // Also in pre-combat during resolution selection
-                // This is harder to detect - check if precombat UI is visible
                 var canvasManager = World.Active?.GetExistingManager<CanvasManager>();
-                var precombat = canvasManager?.PrecombatControllerCanvas as PrecombatController;
-                if (precombat != null && precombat.Visible())
+                if (canvasManager == null)
                 {
-                    return true;
+                    MelonLogger.Msg("IsInPreCombat: canvasManager is null");
+                    return false;
                 }
 
-                return false;
+                var precombat = canvasManager.PrecombatControllerCanvas as PrecombatController;
+                if (precombat == null)
+                {
+                    MelonLogger.Msg("IsInPreCombat: PrecombatControllerCanvas is null");
+                    return false;
+                }
+
+                bool visible = precombat.Visible();
+                MelonLogger.Msg($"IsInPreCombat: PrecombatController.Visible() = {visible}");
+                return visible;
             }
-            catch
+            catch (Exception ex)
             {
+                MelonLogger.Error($"IsInPreCombat error: {ex.Message}");
                 return false;
             }
         }

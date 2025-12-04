@@ -468,6 +468,22 @@ namespace TISpeech.ReviewMode
                 return;
             }
 
+            // Check if combat was pending on game load - go directly to combat mode
+            if (Patches.SpaceCombatPatches.CheckAndClearCombatPendingFlag())
+            {
+                MelonLogger.Msg("Review mode activated with combat pending from load - entering combat mode");
+                EnterCombatMode();
+                return;
+            }
+
+            // Also check if we're currently in pre-combat (OpenStanceUI may have been called)
+            if (CombatSubMode.IsInPreCombat())
+            {
+                MelonLogger.Msg("Review mode activated during pre-combat - entering combat mode");
+                EnterCombatMode();
+                return;
+            }
+
             // Reset navigation to initial state (Council screen)
             navigation.Reset();
 
