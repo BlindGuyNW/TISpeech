@@ -13,6 +13,7 @@ using TISpeech.ReviewMode.Sections;
 using TISpeech.ReviewMode.Readers;
 using TISpeech.ReviewMode.MenuMode;
 using TISpeech.ReviewMode.MenuMode.Screens;
+using TISpeech.ReviewMode.EscapeMenu;
 
 namespace TISpeech.ReviewMode
 {
@@ -86,6 +87,13 @@ namespace TISpeech.ReviewMode
         // Diplomacy greeting mode (for the initial greeting before trade)
         private DiplomacyGreetingMode greetingMode = null;
         public bool IsInGreetingMode => greetingMode != null;
+
+        // Escape menu mode (for in-game pause menu navigation)
+        private EscapeMenuSubMode escapeMenuMode = null;
+        public bool IsInEscapeMenuMode => escapeMenuMode != null;
+
+        // Track when we need to clear GameControl.handlingException (set when opening escape menu)
+        private bool needToClearHandlingException = false;
 
         // Menu mode (for pre-game menu navigation)
         private bool isInMenuMode = false;
@@ -166,6 +174,8 @@ namespace TISpeech.ReviewMode
             fleetsScreen.OnSelectHomeport = SelectHomeportForFleet;
             fleetsScreen.OnSelectMergeTarget = SelectMergeTargetForFleet;
             fleetsScreen.OnExecuteMaintenanceOperation = ExecuteMaintenanceOperation;
+            fleetsScreen.OnSelectLandingSite = SelectLandingSiteForFleet;
+            fleetsScreen.OnSelectLaunchOrbit = SelectLaunchOrbitForFleet;
 
             spaceBodiesScreen = new SpaceBodiesScreen();
             spaceBodiesScreen.OnEnterSelectionMode = EnterSelectionMode;
@@ -338,16 +348,38 @@ namespace TISpeech.ReviewMode
 
             try
             {
+                // Clear the handlingException flag if we set it last frame (when opening escape menu)
+                if (needToClearHandlingException)
+                {
+                    GameControl.handlingException = false;
+                    needToClearHandlingException = false;
+                }
+
                 float currentTime = Time.unscaledTime;
                 if (currentTime - lastInputTime < INPUT_DEBOUNCE)
                     return;
 
                 bool inputHandled = false;
 
+                // Auto-detect escape menu opening during in-game mode
+                if (!isInMenuMode && escapeMenuMode == null && EscapeMenuSubMode.IsEscapeMenuVisible())
+                {
+                    // Escape menu just opened - transition to escape menu mode
+                    escapeMenuMode = new EscapeMenuSubMode();
+                    escapeMenuMode.Activate();
+                    lastInputTime = currentTime;
+                    return;
+                }
+
                 // If in menu mode, use menu input handler
                 if (isInMenuMode)
                 {
                     inputHandled = HandleMenuModeInput();
+                }
+                // Escape menu mode (in-game pause menu)
+                else if (escapeMenuMode != null)
+                {
+                    inputHandled = HandleEscapeMenuModeInput();
                 }
                 // Combat mode takes highest priority when in pre-combat or live combat
                 else if (combatMode != null)
@@ -429,10 +461,17 @@ namespace TISpeech.ReviewMode
         {
             try
             {
-                // Check context: main menu vs in-game
+                // Check context: main menu vs in-game escape menu vs in-game
                 if (IsInMainMenu())
                 {
                     ActivateMenuMode();
+                    return;
+                }
+
+                // Check if in-game escape menu is visible
+                if (EscapeMenuSubMode.IsEscapeMenuVisible())
+                {
+                    ActivateEscapeMenuMode();
                     return;
                 }
 
@@ -570,12 +609,27 @@ namespace TISpeech.ReviewMode
             MelonLogger.Msg($"Menu mode activated with screen index {currentMenuScreenIndex}");
         }
 
+        /// <summary>
+        /// Activate Review Mode in escape menu mode for the in-game pause menu.
+        /// </summary>
+        private void ActivateEscapeMenuMode()
+        {
+            TIInputManager.BlockKeybindings();
+            isActive = true;
+            isInMenuMode = false;
+
+            escapeMenuMode = new EscapeMenuSubMode();
+            escapeMenuMode.Activate();
+
+            MelonLogger.Msg("Escape menu mode activated");
+        }
+
         private void DeactivateReviewMode()
         {
             try
             {
-                // Only restore keybindings if we were in in-game mode
-                if (!isInMenuMode)
+                // Only restore keybindings if we were in in-game mode (not menu or escape menu mode)
+                if (!isInMenuMode && escapeMenuMode == null)
                 {
                     TIInputManager.RestoreKeybindings();
                 }
@@ -591,6 +645,7 @@ namespace TISpeech.ReviewMode
                 missionTargetMode = null;
                 specialPromptMode = null;
                 diplomacyMode = null;
+                escapeMenuMode = null;
                 menuContextStack.Clear();
 
                 TISpeechMod.Speak("Review mode off", interrupt: true);
@@ -676,13 +731,45 @@ namespace TISpeech.ReviewMode
                 if (navigation.BackOut())
                 {
                     TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
+                    return true;
                 }
                 else
                 {
-                    // At top level - deactivate review mode
-                    DeactivateReviewMode();
+                    // At top level - Escape opens the escape menu, other keys deactivate
+                    if (Input.GetKeyDown(KeyCode.Escape))
+                    {
+                        // Open the escape menu ourselves and prevent the game from closing it
+                        // by temporarily setting GameControl.handlingException = true
+                        var optionsScreen = UnityEngine.Object.FindObjectOfType<OptionsScreenController>();
+                        if (optionsScreen != null)
+                        {
+                            // Set handlingException to prevent game's CheckKeys from processing Escape
+                            GameControl.handlingException = true;
+                            needToClearHandlingException = true;
+
+                            // Show the escape menu
+                            optionsScreen.Show();
+
+                            // Activate escape menu mode
+                            escapeMenuMode = new EscapeMenuSubMode();
+                            escapeMenuMode.Activate();
+
+                            return true; // Consume the input
+                        }
+                        else
+                        {
+                            // Fallback: deactivate if we can't find the options screen
+                            DeactivateReviewMode();
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        // Left arrow or Backspace at top level - deactivate review mode
+                        DeactivateReviewMode();
+                        return true;
+                    }
                 }
-                return true;
             }
 
             // Read detail (Numpad *, Minus/Dash key)
@@ -964,6 +1051,228 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
+            return false;
+        }
+
+        /// <summary>
+        /// Handle input in escape menu mode (in-game pause menu).
+        /// </summary>
+        private bool HandleEscapeMenuModeInput()
+        {
+            if (escapeMenuMode == null)
+                return false;
+
+            // TEXT INPUT MODE - handle FIRST before any other checks
+            // This prevents visibility checks from interrupting text entry
+            if (escapeMenuMode.IsEnteringText)
+            {
+                return HandleEscapeMenuTextInput();
+            }
+
+            // Check if escape menu was closed (e.g., via "Back to Game" in game UI)
+            // But skip this check during the activation grace period to avoid false detection
+            if (!escapeMenuMode.IsInActivationGracePeriod() && !EscapeMenuSubMode.IsEscapeMenuVisible())
+            {
+                // Return to in-game review mode
+                escapeMenuMode.Deactivate();
+                escapeMenuMode = null;
+                TISpeechMod.Speak("Returned to game. Review mode.", interrupt: true);
+
+                // Reset navigation to initial state
+                navigation.Reset();
+                var screen = navigation.CurrentScreen;
+                if (screen != null)
+                {
+                    TISpeechMod.Speak(screen.GetActivationAnnouncement(), interrupt: false);
+                }
+                return true;
+            }
+
+            // Check for context changes (sub-menu opened/closed)
+            escapeMenuMode.CheckContextChange();
+
+            // Navigate up/previous (Numpad 8, Up arrow)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                escapeMenuMode.NavigatePrevious();
+                return true;
+            }
+
+            // Navigate down/next (Numpad 2, Down arrow)
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                escapeMenuMode.NavigateNext();
+                return true;
+            }
+
+            // Adjust control left (Numpad 4, Left arrow) - for sliders/dropdowns
+            if (Input.GetKeyDown(KeyCode.Keypad4) || Input.GetKeyDown(KeyCode.LeftArrow))
+            {
+                escapeMenuMode.AdjustCurrentControl(increment: false);
+                return true;
+            }
+
+            // Adjust control right (Numpad 6, Right arrow) - for sliders/dropdowns
+            if (Input.GetKeyDown(KeyCode.Keypad6) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                escapeMenuMode.AdjustCurrentControl(increment: true);
+                return true;
+            }
+
+            // Activate control (Numpad Enter, Numpad 5, Enter)
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return))
+            {
+                escapeMenuMode.ActivateCurrentControl();
+                return true;
+            }
+
+            // Escape key - invoke "Back to Game" (but not immediately after activation)
+            if (Input.GetKeyDown(KeyCode.Escape) && !escapeMenuMode.IsInActivationGracePeriod())
+            {
+                escapeMenuMode.InvokeBackToGame();
+                escapeMenuMode.Deactivate();
+                escapeMenuMode = null;
+
+                // Reset navigation for in-game mode
+                navigation.Reset();
+                var screen = navigation.CurrentScreen;
+                if (screen != null)
+                {
+                    TISpeechMod.Speak(screen.GetActivationAnnouncement(), interrupt: false);
+                }
+                return true;
+            }
+
+            // Read detail (Numpad *, Minus/Dash key)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                escapeMenuMode.ReadDetail();
+                return true;
+            }
+
+            // List all controls (Numpad /, Equals key)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
+            {
+                escapeMenuMode.ListAllControls();
+                return true;
+            }
+
+            // Letter navigation (A-Z) - jump to control starting with that letter
+            char? letter = GetPressedLetter();
+            if (letter.HasValue)
+            {
+                escapeMenuMode.NavigateByLetter(letter.Value);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Handle text input mode for escape menu (save filename entry).
+        /// </summary>
+        private bool HandleEscapeMenuTextInput()
+        {
+            if (escapeMenuMode == null || !escapeMenuMode.IsEnteringText)
+                return false;
+
+            // Enter - apply text input
+            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+            {
+                string result = escapeMenuMode.ApplyTextInput();
+                TISpeechMod.Speak(result, interrupt: true);
+                return true;
+            }
+
+            // Escape - cancel text input
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                string result = escapeMenuMode.CancelTextInput();
+                TISpeechMod.Speak(result, interrupt: true);
+                return true;
+            }
+
+            // Backspace - delete last character
+            if (Input.GetKeyDown(KeyCode.Backspace))
+            {
+                if (escapeMenuMode.HandleBackspace())
+                {
+                    string deletedChar = escapeMenuMode.TextInput.Length > 0 ? "" : "empty";
+                    if (string.IsNullOrEmpty(escapeMenuMode.TextInput))
+                        TISpeechMod.Speak("empty", interrupt: true);
+                    else
+                        TISpeechMod.Speak(escapeMenuMode.TextInput, interrupt: true);
+                }
+                return true;
+            }
+
+            // Space
+            if (Input.GetKeyDown(KeyCode.Space))
+            {
+                if (escapeMenuMode.HandleCharacter(' '))
+                {
+                    TISpeechMod.Speak("space", interrupt: true);
+                }
+                return true;
+            }
+
+            // Check for letter keys (A-Z)
+            for (int i = 0; i < 26; i++)
+            {
+                KeyCode keyCode = (KeyCode)((int)KeyCode.A + i);
+                if (Input.GetKeyDown(keyCode))
+                {
+                    bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                    char c = shiftHeld ? (char)('A' + i) : (char)('a' + i);
+                    if (escapeMenuMode.HandleCharacter(c))
+                    {
+                        TISpeechMod.Speak(c.ToString(), interrupt: true);
+                    }
+                    return true;
+                }
+            }
+
+            // Check for number keys (0-9) - both main keyboard and numpad
+            for (int i = 0; i <= 9; i++)
+            {
+                KeyCode alphaKey = (KeyCode)((int)KeyCode.Alpha0 + i);
+                KeyCode numpadKey = (KeyCode)((int)KeyCode.Keypad0 + i);
+
+                if (Input.GetKeyDown(alphaKey) || Input.GetKeyDown(numpadKey))
+                {
+                    char c = (char)('0' + i);
+                    if (escapeMenuMode.HandleCharacter(c))
+                    {
+                        TISpeechMod.Speak(c.ToString(), interrupt: true);
+                    }
+                    return true;
+                }
+            }
+
+            // Special characters
+            if (Input.GetKeyDown(KeyCode.Minus) || Input.GetKeyDown(KeyCode.KeypadMinus))
+            {
+                bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                char c = shiftHeld ? '_' : '-';
+                if (escapeMenuMode.HandleCharacter(c))
+                {
+                    TISpeechMod.Speak(c == '_' ? "underscore" : "dash", interrupt: true);
+                }
+                return true;
+            }
+
+            if (Input.GetKeyDown(KeyCode.Period) || Input.GetKeyDown(KeyCode.KeypadPeriod))
+            {
+                if (escapeMenuMode.HandleCharacter('.'))
+                {
+                    TISpeechMod.Speak("period", interrupt: true);
+                }
+                return true;
+            }
+
+            // No key was pressed - return false to allow normal frame processing
+            // but we're still in text input mode so navigation keys won't work
             return false;
         }
 
@@ -3273,6 +3582,192 @@ namespace TISpeech.ReviewMode
             {
                 MelonLogger.Error($"Error executing maintenance operation: {ex.Message}");
                 TISpeechMod.Speak("Error executing operation", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Open selection mode to choose a landing site for the fleet.
+        /// </summary>
+        private void SelectLandingSiteForFleet(TISpaceFleetState fleet)
+        {
+            if (fleet == null)
+            {
+                TISpeechMod.Speak("No fleet selected", interrupt: true);
+                return;
+            }
+
+            try
+            {
+                var landOp = OperationsManager.operationsLookup[typeof(LandOnSurfaceOperation)] as LandOnSurfaceOperation;
+                if (landOp == null)
+                {
+                    TISpeechMod.Speak("Land operation not available", interrupt: true);
+                    return;
+                }
+
+                var targets = landOp.GetPossibleTargets(fleet);
+                if (targets.Count == 0)
+                {
+                    TISpeechMod.Speak("No landing sites available", interrupt: true);
+                    return;
+                }
+
+                // Build selection options
+                var options = targets.Select(t =>
+                {
+                    string name;
+                    string detail;
+
+                    // Target could be a hab site or a hab
+                    if (t.ref_hab != null)
+                    {
+                        name = t.ref_hab.displayName;
+                        detail = t.ref_hab.faction != null ? $"Owned by {t.ref_hab.faction.displayName}" : "Unoccupied";
+                    }
+                    else if (t.ref_habSite != null)
+                    {
+                        name = t.ref_habSite.displayName;
+                        detail = "Empty site";
+                    }
+                    else
+                    {
+                        name = t.displayName ?? "Unknown";
+                        detail = "";
+                    }
+
+                    return new SelectionOption
+                    {
+                        Label = name,
+                        DetailText = detail,
+                        Data = t
+                    };
+                }).ToList();
+
+                EnterSelectionMode(
+                    $"Select landing site for {fleet.displayName}",
+                    options,
+                    selectedIndex =>
+                    {
+                        if (selectedIndex >= 0 && selectedIndex < targets.Count)
+                        {
+                            var target = targets[selectedIndex];
+                            string targetName = target.ref_hab?.displayName ?? target.ref_habSite?.displayName ?? target.displayName;
+
+                            if (landOp.ActorCanPerformOperation(fleet, target))
+                            {
+                                landOp.OnOperationConfirm(fleet, target, null, null);
+                                TISpeechMod.Speak($"Landing at {targetName}", interrupt: true);
+                                MelonLogger.Msg($"Fleet {fleet.displayName} landing at {targetName}");
+                                navigation.RefreshSections();
+                            }
+                            else
+                            {
+                                TISpeechMod.Speak($"Cannot land at {targetName}", interrupt: true);
+                            }
+                        }
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error selecting landing site: {ex.Message}");
+                TISpeechMod.Speak("Error selecting landing site", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Open selection mode to choose a launch orbit for the fleet.
+        /// </summary>
+        private void SelectLaunchOrbitForFleet(TISpaceFleetState fleet)
+        {
+            if (fleet == null)
+            {
+                TISpeechMod.Speak("No fleet selected", interrupt: true);
+                return;
+            }
+
+            try
+            {
+                var launchOp = OperationsManager.operationsLookup[typeof(LaunchFromSurfaceOperation)] as LaunchFromSurfaceOperation;
+                if (launchOp == null)
+                {
+                    TISpeechMod.Speak("Launch operation not available", interrupt: true);
+                    return;
+                }
+
+                var targets = launchOp.GetPossibleTargets(fleet);
+                if (targets.Count == 0)
+                {
+                    TISpeechMod.Speak("No launch orbits available - insufficient delta-V", interrupt: true);
+                    return;
+                }
+
+                // Build selection options - targets are orbit states
+                var options = targets.Select(t =>
+                {
+                    var orbit = t.ref_orbit;
+                    string name = orbit?.displayName ?? t.displayName ?? "Unknown orbit";
+                    string detail = "";
+
+                    if (orbit != null)
+                    {
+                        // Calculate delta-V cost for this orbit
+                        try
+                        {
+                            var habSite = fleet.dockedLocation?.ref_habSite;
+                            if (habSite != null)
+                            {
+                                double dvCost = orbit.DeltaVToReachFromSurface_kps(habSite.latitude, fleet.maxAcceleration_mps2);
+                                detail = $"{dvCost:F1} km/s delta-V, {orbit.altitude_km:N0} km altitude";
+                            }
+                            else
+                            {
+                                detail = $"{orbit.altitude_km:N0} km altitude";
+                            }
+                        }
+                        catch
+                        {
+                            detail = $"{orbit.altitude_km:N0} km altitude";
+                        }
+                    }
+
+                    return new SelectionOption
+                    {
+                        Label = name,
+                        DetailText = detail,
+                        Data = t
+                    };
+                }).ToList();
+
+                EnterSelectionMode(
+                    $"Select launch orbit for {fleet.displayName}",
+                    options,
+                    selectedIndex =>
+                    {
+                        if (selectedIndex >= 0 && selectedIndex < targets.Count)
+                        {
+                            var target = targets[selectedIndex];
+                            string orbitName = target.ref_orbit?.displayName ?? target.displayName ?? "orbit";
+
+                            if (launchOp.ActorCanPerformOperation(fleet, target))
+                            {
+                                launchOp.OnOperationConfirm(fleet, target, null, null);
+                                TISpeechMod.Speak($"Launching to {orbitName}", interrupt: true);
+                                MelonLogger.Msg($"Fleet {fleet.displayName} launching to {orbitName}");
+                                navigation.RefreshSections();
+                            }
+                            else
+                            {
+                                TISpeechMod.Speak($"Cannot launch to {orbitName}", interrupt: true);
+                            }
+                        }
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error selecting launch orbit: {ex.Message}");
+                TISpeechMod.Speak("Error selecting launch orbit", interrupt: true);
             }
         }
 

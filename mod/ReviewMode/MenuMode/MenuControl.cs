@@ -149,6 +149,9 @@ namespace TISpeech.ReviewMode.MenuMode
                         dropdown.value = nextIndex;
                     }
                     break;
+
+                // InputField is handled specially by EscapeMenuSubMode.ActivateCurrentControl
+                // which enters text input mode instead of activating directly
             }
         }
 

@@ -1,20 +1,21 @@
 using System;
 using System.Collections.Generic;
 using MelonLoader;
+using PavonisInteractive.TerraInvicta;
+using TISpeech.ReviewMode.MenuMode;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
-using PavonisInteractive.TerraInvicta;
 
-namespace TISpeech.ReviewMode.MenuMode.Screens
+namespace TISpeech.ReviewMode.EscapeMenu.Screens
 {
     /// <summary>
-    /// Menu screen for the Options/Settings menu.
-    /// Provides navigation through language, audio, gameplay toggles, sliders, etc.
+    /// Escape menu screen for game settings.
+    /// Presents all settings in a flat list with section dividers, similar to main menu.
     /// </summary>
-    public class OptionsScreen : MenuScreenBase
+    public class InGameSettingsScreen : EscapeMenuScreenBase
     {
-        public override string Name => "Options";
+        public override string Name => "Settings";
 
         private List<MenuControl> controls = new List<MenuControl>();
         private OptionsMenuController optionsController;
@@ -27,19 +28,19 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
         }
 
         /// <summary>
-        /// Check if the Options menu is currently visible.
+        /// Check if the Settings menu is currently visible.
         /// </summary>
         public static bool IsVisible()
         {
-            var controller = UnityEngine.Object.FindObjectOfType<OptionsMenuController>();
-            if (controller == null)
+            var optionsScreen = UnityEngine.Object.FindObjectOfType<OptionsScreenController>();
+            if (optionsScreen == null)
                 return false;
 
-            // Use the Menu.IsOpen property - this is the definitive check
-            if (controller.menu != null && controller.menu.IsOpen)
-                return true;
+            if (optionsScreen.settingsMenuObject == null)
+                return false;
 
-            return false;
+            var menu = optionsScreen.settingsMenuObject.GetComponent<Menu>();
+            return menu != null && menu.IsOpen;
         }
 
         public override void Refresh()
@@ -48,26 +49,28 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
 
             try
             {
-                optionsController = UnityEngine.Object.FindObjectOfType<OptionsMenuController>();
-                audioController = UnityEngine.Object.FindObjectOfType<AudioMenuController>();
-                graphicsController = UnityEngine.Object.FindObjectOfType<GraphicsMenuController>();
-
-                if (optionsController == null)
+                // Get settings controllers
+                var optionsScreen = UnityEngine.Object.FindObjectOfType<OptionsScreenController>();
+                if (optionsScreen?.optionsMenuController == null)
                 {
-                    MelonLogger.Msg("OptionsScreen: OptionsMenuController not found");
+                    MelonLogger.Msg("InGameSettingsScreen: optionsMenuController not found");
                     return;
                 }
+
+                optionsController = optionsScreen.optionsMenuController;
+                audioController = UnityEngine.Object.FindObjectOfType<AudioMenuController>();
+                graphicsController = UnityEngine.Object.FindObjectOfType<GraphicsMenuController>();
 
                 // Build all settings in a flat list with section dividers
                 BuildGameplayControls();
                 BuildAudioControls();
                 BuildGraphicsControls();
 
-                MelonLogger.Msg($"OptionsScreen: Found {controls.Count} controls");
+                MelonLogger.Msg($"InGameSettingsScreen: Found {controls.Count} total controls");
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"Error refreshing OptionsScreen: {ex.Message}");
+                MelonLogger.Error($"Error refreshing InGameSettingsScreen: {ex.Message}");
             }
         }
 
@@ -109,26 +112,13 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
 
             // Cursor toggle
             AddToggle(optionsController.customCursorToggle, "Use Default Cursor");
-
-            // Reset tutorial button (only shown during tutorial)
-            if (optionsController.resetTutorialButton != null &&
-                optionsController.resetTutorialButton.activeInHierarchy)
-            {
-                var resetButton = optionsController.resetTutorialButton.GetComponent<Button>();
-                if (resetButton != null)
-                {
-                    var resetControl = MenuControl.FromButton(resetButton, "Reset Tutorial");
-                    if (resetControl != null)
-                        controls.Add(resetControl);
-                }
-            }
         }
 
         private void BuildAudioControls()
         {
             if (audioController == null)
             {
-                MelonLogger.Msg("OptionsScreen: AudioMenuController not found");
+                MelonLogger.Msg("InGameSettingsScreen: AudioMenuController not found");
                 return;
             }
 
@@ -156,7 +146,7 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
         {
             if (graphicsController == null)
             {
-                MelonLogger.Msg("OptionsScreen: GraphicsMenuController not found");
+                MelonLogger.Msg("InGameSettingsScreen: GraphicsMenuController not found");
                 return;
             }
 
@@ -224,11 +214,8 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
                 return;
 
             var control = controls[index];
-
             if (!control.IsInteractable)
             {
-                if (control.Label.StartsWith("---"))
-                    return; // Divider, do nothing
                 TISpeechMod.Speak($"{control.Label} is not available", interrupt: true);
                 return;
             }
@@ -251,12 +238,12 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
             TISpeechMod.Speak($"Activating {control.Label}", interrupt: true);
             control.Activate();
 
-            MelonLogger.Msg($"OptionsScreen: Activated '{control.Label}'");
+            MelonLogger.Msg($"InGameSettingsScreen: Activated '{control.Label}'");
         }
 
         public override string GetActivationAnnouncement()
         {
-            return $"{Name}. {controls.Count} settings.";
+            return $"Settings. {controls.Count} items.";
         }
 
         public override void AdjustControl(int index, bool increment)
@@ -269,15 +256,15 @@ namespace TISpeech.ReviewMode.MenuMode.Screens
 
         public override void OnDeactivate()
         {
-            // Save settings when leaving the Options screen
+            // Save settings when leaving
             try
             {
                 TIPlayerProfileManager.SavePlayerConfig();
-                MelonLogger.Msg("OptionsScreen: Saved player settings");
+                MelonLogger.Msg("InGameSettingsScreen: Saved player settings");
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"OptionsScreen: Failed to save settings: {ex.Message}");
+                MelonLogger.Error($"InGameSettingsScreen: Failed to save settings: {ex.Message}");
             }
         }
     }
