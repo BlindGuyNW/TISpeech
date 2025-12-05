@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using MelonLoader;
@@ -155,7 +156,9 @@ namespace TISpeech.ReviewMode.EscapeMenu.Codex
         #region Content Navigation
 
         /// <summary>
-        /// Get content items from the UI (only active GameObjects).
+        /// Get content items from the UI using the list manager's size property.
+        /// Note: Items may be inactive (created with inactive: true), so we don't filter by activeSelf.
+        /// The game's ListManagerBase.size tracks how many valid items exist.
         /// </summary>
         private List<CodexInfoListItemController> GetVisibleContent()
         {
@@ -164,14 +167,18 @@ namespace TISpeech.ReviewMode.EscapeMenu.Codex
             if (controller == null || controller.codexInfoListManager == null)
                 return items;
 
-            foreach (Transform child in controller.codexInfoListManager.transform)
+            // Use the list manager's size property to know how many items to read
+            // Items may be inactive but still contain valid content
+            int listSize = controller.codexInfoListManager.size;
+            for (int i = 0; i < listSize; i++)
             {
-                if (child.gameObject.activeSelf)
-                {
-                    var item = child.GetComponent<CodexInfoListItemController>();
-                    if (item != null)
-                        items.Add(item);
-                }
+                if (i >= controller.codexInfoListManager.transform.childCount)
+                    break;
+
+                var child = controller.codexInfoListManager.transform.GetChild(i);
+                var item = child.GetComponent<CodexInfoListItemController>();
+                if (item != null)
+                    items.Add(item);
             }
 
             return items;
@@ -288,33 +295,51 @@ namespace TISpeech.ReviewMode.EscapeMenu.Codex
                     return;
 
                 var topic = cachedTopics[currentTopicIndex];
+                string topicTitle = TISpeechMod.CleanText(topic.topicTitle.text);
+                string dataName = topic.template.dataName;
 
-                // Use game's selection method to populate content
-                controller.SelectTopic(topic.template.dataName);
-
-                // Switch to content level
+                // Switch to content level immediately
                 currentLevel = NavigationLevel.Content;
                 currentContentIndex = 0;
 
-                // Need to wait a frame for content to populate - use a coroutine-like approach
-                // For now, refresh immediately and announce
-                RefreshContentCache();
+                // Use game's selection method to populate content (this is a coroutine)
+                controller.SelectTopic(dataName);
 
-                int contentCount = cachedContent?.Count ?? 0;
-                string topicTitle = TISpeechMod.CleanText(topic.topicTitle.text);
+                // Announce that we're loading
+                TISpeechMod.Speak($"{topicTitle}. Loading content...", interrupt: true);
 
-                if (contentCount > 0)
-                {
-                    TISpeechMod.Speak($"{topicTitle}. {contentCount} sections.", interrupt: true);
-                    TISpeechMod.Speak(ReadContent(0), interrupt: false);
-                }
-                else
-                {
-                    TISpeechMod.Speak($"{topicTitle}. No content available.", interrupt: true);
-                }
-
-                MelonLogger.Msg($"CodexSubMode: Drilled into topic '{topic.template.dataName}', {contentCount} content items");
+                // Use MelonCoroutines to wait for the game's coroutine to complete
+                MelonCoroutines.Start(DrillDownDelayed(topicTitle, dataName));
             }
+        }
+
+        /// <summary>
+        /// Coroutine to wait for content to populate after SelectTopic.
+        /// The game's SelectTopic coroutine needs at least one frame to complete.
+        /// </summary>
+        private IEnumerator DrillDownDelayed(string topicTitle, string dataName)
+        {
+            // Wait two frames to ensure the game's coroutine has completed
+            // (SelectTopic uses yield return null which waits one frame)
+            yield return null;
+            yield return null;
+
+            // Now refresh our content cache
+            RefreshContentCache();
+
+            int contentCount = cachedContent?.Count ?? 0;
+
+            if (contentCount > 0)
+            {
+                TISpeechMod.Speak($"{contentCount} sections.", interrupt: true);
+                TISpeechMod.Speak(ReadContent(0), interrupt: false);
+            }
+            else
+            {
+                TISpeechMod.Speak("No content available.", interrupt: true);
+            }
+
+            MelonLogger.Msg($"CodexSubMode: Drilled into topic '{dataName}', {contentCount} content items");
         }
 
         /// <summary>
