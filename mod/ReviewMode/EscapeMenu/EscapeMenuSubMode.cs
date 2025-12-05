@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
+using TISpeech.ReviewMode.EscapeMenu.Codex;
 using TISpeech.ReviewMode.EscapeMenu.Screens;
 using TISpeech.ReviewMode.MenuMode;
 using TMPro;
@@ -31,7 +32,20 @@ namespace TISpeech.ReviewMode.EscapeMenu
         private TMP_InputField targetInputField = null;
         private int maxTextLength = 100;
 
+        // Codex sub-mode for encyclopedia navigation
+        private CodexSubMode codexSubMode;
+
         public bool IsActive { get; private set; }
+
+        /// <summary>
+        /// Whether we are currently navigating the Codex.
+        /// </summary>
+        public bool IsInCodexMode => codexSubMode != null && codexSubMode.IsActive;
+
+        /// <summary>
+        /// Access to the Codex sub-mode for input routing.
+        /// </summary>
+        public CodexSubMode CodexMode => codexSubMode;
         public bool IsEnteringText => isEnteringText;
         public string TextInput => textInput;
         public string CurrentScreenName => screens != null && currentScreenIndex >= 0 && currentScreenIndex < screens.Count
@@ -130,6 +144,13 @@ namespace TISpeech.ReviewMode.EscapeMenu
         /// </summary>
         public void Deactivate()
         {
+            // Clean up Codex mode if active
+            if (codexSubMode != null)
+            {
+                codexSubMode.Deactivate();
+                codexSubMode = null;
+            }
+
             IsActive = false;
             var screen = GetCurrentScreen();
             screen?.OnDeactivate();
@@ -201,10 +222,45 @@ namespace TISpeech.ReviewMode.EscapeMenu
         }
 
         /// <summary>
-        /// Check for screen context changes (e.g., sub-menu opened/closed).
+        /// Check for screen context changes (e.g., sub-menu opened/closed, Codex opened/closed).
         /// </summary>
         public bool CheckContextChange()
         {
+            // Check for Codex state changes first
+            bool codexVisible = CodexSubMode.IsCodexVisible();
+
+            if (codexVisible && codexSubMode == null)
+            {
+                // Codex just became visible - activate Codex mode
+                codexSubMode = new CodexSubMode();
+                codexSubMode.Activate();
+                MelonLogger.Msg("EscapeMenuSubMode: Switched to Codex mode");
+                return true;
+            }
+
+            if (!codexVisible && codexSubMode != null)
+            {
+                // Codex was closed - deactivate Codex mode
+                codexSubMode.Deactivate();
+                codexSubMode = null;
+                MelonLogger.Msg("EscapeMenuSubMode: Returned from Codex mode");
+
+                // Announce return to escape menu
+                var screen = GetCurrentScreen();
+                if (screen != null)
+                {
+                    screen.OnActivate();
+                    string announcement = screen.GetActivationAnnouncement();
+                    TISpeechMod.Speak($"Escape menu. {announcement}", interrupt: true);
+                }
+                return true;
+            }
+
+            // If in Codex mode, no need to check escape menu screens
+            if (IsInCodexMode)
+                return false;
+
+            // Check for escape menu screen changes
             int newScreenIndex = GetActiveScreenIndex();
             if (newScreenIndex != currentScreenIndex)
             {

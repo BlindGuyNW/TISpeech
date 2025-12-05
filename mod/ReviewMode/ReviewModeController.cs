@@ -14,6 +14,7 @@ using TISpeech.ReviewMode.Readers;
 using TISpeech.ReviewMode.MenuMode;
 using TISpeech.ReviewMode.MenuMode.Screens;
 using TISpeech.ReviewMode.EscapeMenu;
+using TISpeech.ReviewMode.EscapeMenu.Codex;
 
 namespace TISpeech.ReviewMode
 {
@@ -1069,6 +1070,13 @@ namespace TISpeech.ReviewMode
                 return HandleEscapeMenuTextInput();
             }
 
+            // CODEX MODE - handle before regular escape menu input
+            // Codex has its own navigation (topics, content sections)
+            if (escapeMenuMode.IsInCodexMode)
+            {
+                return HandleCodexModeInput();
+            }
+
             // Check if escape menu was closed (e.g., via "Back to Game" in game UI)
             // But skip this check during the activation grace period to avoid false detection
             if (!escapeMenuMode.IsInActivationGracePeriod() && !EscapeMenuSubMode.IsEscapeMenuVisible())
@@ -1163,6 +1171,90 @@ namespace TISpeech.ReviewMode
             if (letter.HasValue)
             {
                 escapeMenuMode.NavigateByLetter(letter.Value);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Handle input in Codex mode (encyclopedia navigation).
+        /// The Codex has two levels: topics (left panel) and content (right panel).
+        /// </summary>
+        private bool HandleCodexModeInput()
+        {
+            if (escapeMenuMode == null || !escapeMenuMode.IsInCodexMode)
+                return false;
+
+            var codexMode = escapeMenuMode.CodexMode;
+            if (codexMode == null)
+                return false;
+
+            // Check for Codex being closed (returns us to escape menu)
+            escapeMenuMode.CheckContextChange();
+
+            // If Codex was closed, we're no longer in Codex mode
+            if (!escapeMenuMode.IsInCodexMode)
+                return true;
+
+            // Navigate up/previous (Numpad 8, Up arrow)
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                codexMode.NavigatePrevious();
+                return true;
+            }
+
+            // Navigate down/next (Numpad 2, Down arrow)
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                codexMode.NavigateNext();
+                return true;
+            }
+
+            // Drill down (Numpad Enter, Numpad 5, Enter, Right arrow) - select topic or enter content
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                codexMode.DrillDown();
+                return true;
+            }
+
+            // Back out (Escape, Backspace, Left arrow)
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Backspace) ||
+                Input.GetKeyDown(KeyCode.LeftArrow))
+            {
+                if (codexMode.CurrentLevel == CodexSubMode.NavigationLevel.Content)
+                {
+                    // Back out from content to topics
+                    codexMode.BackOut();
+                }
+                else
+                {
+                    // Close Codex entirely - back to escape menu
+                    codexMode.CloseCodex();
+                }
+                return true;
+            }
+
+            // Read detail / re-read current (Numpad *, Minus/Dash key)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                codexMode.ReadDetail();
+                return true;
+            }
+
+            // List all items (Numpad /, Equals key)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
+            {
+                codexMode.ListAllItems();
+                return true;
+            }
+
+            // Letter navigation (A-Z) - jump to topic starting with that letter
+            char? letter = GetPressedLetter();
+            if (letter.HasValue)
+            {
+                codexMode.NavigateByLetter(letter.Value);
                 return true;
             }
 
