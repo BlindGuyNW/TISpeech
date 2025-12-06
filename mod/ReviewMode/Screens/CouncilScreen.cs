@@ -603,7 +603,7 @@ namespace TISpeech.ReviewMode.Screens
                 for (int step = 0; step <= maxSteps; step++)
                 {
                     float cost = mission.cost.GetCost(step, councilor);
-                    var breakdown = modifierReader.GetModifiers(mission, councilor, target, step);
+                    var breakdown = modifierReader.GetModifiers(mission, councilor, target, cost);
 
                     string label;
                     if (step == 0)

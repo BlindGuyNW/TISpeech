@@ -226,8 +226,21 @@ namespace TISpeech
             // Remove remaining TextMeshPro and HTML tags
             text = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]+>", "");
 
-            // Remove multiple spaces and trim
-            text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+            // Collapse multiple spaces (but NOT newlines) into single space
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"[ \t]+", " ");
+
+            // Collapse 3+ consecutive newlines into double newline (paragraph break)
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"(\r?\n){3,}", "\n\n");
+
+            // Trim whitespace from each line
+            var lines = text.Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                lines[i] = lines[i].Trim();
+            }
+            text = string.Join("\n", lines);
+
+            // Remove leading/trailing newlines
             text = text.Trim();
 
             return text;

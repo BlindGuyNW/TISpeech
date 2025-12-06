@@ -172,6 +172,12 @@ namespace TISpeech.ReviewMode.Readers
                 sections.Add(CreateManageRelationsSection(nation, faction));
             }
 
+            // Policies section - available policy options (for executive)
+            if (faction != null && nation.executiveFaction == faction && nation.ExecutivePowerConsolidated)
+            {
+                sections.Add(CreatePoliciesSection(nation, faction));
+            }
+
             // Claims section - territorial claims and unification status
             sections.Add(CreateClaimsSection(nation));
 
@@ -395,13 +401,50 @@ namespace TISpeech.ReviewMode.Readers
             foreach (var cp in yourCPs)
             {
                 string cpName = GetControlPointName(cp, nation);
-                string priorities = GetPrioritySummary(cp);
+                string benefits = GetControlPointBenefitsSummary(nation, cp, faction);
 
-                // Each control point is an item that can be drilled into for priority setting
-                section.AddItem(cpName, priorities, GetControlPointDetail(cp, nation));
+                // Each control point is an item - detail shows full game tooltip
+                section.AddItem(cpName, benefits, GetControlPointDetail(cp, nation));
             }
 
             return section;
+        }
+
+        /// <summary>
+        /// Get a short summary of what resources this control point provides.
+        /// </summary>
+        private string GetControlPointBenefitsSummary(TINationState nation, TIControlPoint cp, TIFactionState faction)
+        {
+            var parts = new List<string>();
+
+            try
+            {
+                float ip = nation.GetInvestmentFromControlPoint();
+                if (ip > 0)
+                    parts.Add($"{ip:F1} IP");
+
+                float funding = nation.GetMonthlyMoneyIncomeFromControlPoint(faction);
+                if (funding > 0)
+                    parts.Add($"${FormatLargeNumber(funding)} funding");
+
+                float research = nation.GetMonthlyResearchFromControlPoint(faction);
+                if (research > 0)
+                    parts.Add($"{research:F1} research");
+
+                float boost = nation.GetMonthlyBoostIncomeFromControlPoint();
+                if (boost > 0)
+                    parts.Add($"{boost:F1} boost");
+
+                int mc = nation.GetMissionControlFromControlPoint(cp.positionInNation);
+                if (mc > 0)
+                    parts.Add($"{mc} MC");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error getting CP benefits: {ex.Message}");
+            }
+
+            return parts.Count > 0 ? string.Join(", ", parts) : "No benefits";
         }
 
         private ISection CreateControlPointActionsSection(TINationState nation, List<TIControlPoint> yourCPs, TIFactionState faction)
@@ -877,7 +920,7 @@ namespace TISpeech.ReviewMode.Readers
 
         private ISection CreateAllControlPointsSection(TINationState nation)
         {
-            var section = new DataSection("Control Point Status");
+            var section = new DataSection("All Control Points");
 
             if (nation.controlPoints == null || nation.controlPoints.Count == 0)
             {
@@ -885,26 +928,40 @@ namespace TISpeech.ReviewMode.Readers
                 return section;
             }
 
-            // Group by faction
+            var playerFaction = GameControl.control?.activePlayer;
+
+            // List each control point individually with full details
+            foreach (var cp in nation.controlPoints)
+            {
+                string typeName = cp.controlPointTypeDisplayName ?? cp.controlPointType.ToString();
+                string ownerName = cp.faction?.displayName ?? "Uncontrolled";
+
+                // Build status indicators
+                var status = new List<string>();
+                if (cp.executive)
+                    status.Add("Executive");
+                if (cp.defended)
+                    status.Add("defended");
+                if (cp.benefitsDisabled)
+                    status.Add("crackdown");
+
+                string statusStr = status.Count > 0 ? $" ({string.Join(", ", status)})" : "";
+                string label = $"{typeName}{statusStr}";
+                string value = $"owned by {ownerName}";
+
+                // Use game's tooltip for full details
+                string detail = GetCleanTooltip(() => NationInfoController.ControlPointTooltip(nation, cp));
+
+                section.AddItem(label, value, detail);
+            }
+
+            // Add summary at the end
             var byFaction = nation.controlPoints
                 .GroupBy(cp => cp.faction?.displayName ?? "Uncontrolled")
                 .OrderByDescending(g => g.Count());
 
-            foreach (var group in byFaction)
-            {
-                string factionName = group.Key;
-                int count = group.Count();
-                int defendedCount = group.Count(cp => cp.defended);
-                int crackdownCount = group.Count(cp => cp.benefitsDisabled);
-
-                string details = $"{count} CP{(count > 1 ? "s" : "")}";
-                if (defendedCount > 0)
-                    details += $", {defendedCount} defended";
-                if (crackdownCount > 0)
-                    details += $", {crackdownCount} under crackdown";
-
-                section.AddItem(factionName, details);
-            }
+            var summaryParts = byFaction.Select(g => $"{g.Key}: {g.Count()}");
+            section.AddItem("Summary", string.Join(", ", summaryParts));
 
             return section;
         }
@@ -913,9 +970,12 @@ namespace TISpeech.ReviewMode.Readers
         {
             var section = new DataSection("Military Summary");
 
-            section.AddItem("Military Tech", $"{nation.militaryTechLevel:F1}");
+            // Military tech with game tooltip
+            string miltechTooltip = GetCleanTooltip(() => NationInfoController.BuildMiltechTooltip(nation));
+            section.AddItem("Military Tech", $"{nation.militaryTechLevel:F1}", miltechTooltip);
 
-            // Army count with status breakdown
+            // Army count with status breakdown and game tooltip
+            string armiesDetail = GetCleanTooltip(() => NationInfoController.BuildnumArmiesTooltip(nation));
             int totalArmies = nation.armies?.Count ?? 0;
             if (totalArmies > 0)
             {
@@ -924,28 +984,34 @@ namespace TISpeech.ReviewMode.Readers
                 string armyStatus = $"{totalArmies}";
                 if (inBattle > 0) armyStatus += $" ({inBattle} in battle)";
                 else if (moving > 0) armyStatus += $" ({moving} moving)";
-                section.AddItem("Armies", armyStatus);
+                section.AddItem("Armies", armyStatus, armiesDetail);
             }
             else
             {
-                section.AddItem("Armies", "0");
+                section.AddItem("Armies", "0", armiesDetail);
             }
 
-            section.AddItem("Navies", nation.numNavies.ToString());
-            section.AddItem("STO Fighters", nation.numSTOFighters.ToString());
+            // Navies with game tooltip
+            string navalTooltip = GetCleanTooltip(() => NationInfoController.BuildNavalTooltip(nation));
+            section.AddItem("Navies", nation.numNavies.ToString(), navalTooltip);
 
-            // Nuclear summary
+            // STO Fighters with game tooltip
+            string stoTooltip = GetCleanTooltip(() => NationInfoController.BuildSTOFightersTooltip(nation));
+            section.AddItem("STO Fighters", nation.numSTOFighters.ToString(), stoTooltip);
+
+            // Nuclear summary with game tooltip
+            string nukesTooltip = GetCleanTooltip(() => NationInfoController.BuildNukesTooltip(nation));
             if (nation.numNuclearWeapons > 0)
             {
-                section.AddItem("Nuclear Weapons", nation.numNuclearWeapons.ToString());
+                section.AddItem("Nuclear Weapons", nation.numNuclearWeapons.ToString(), nukesTooltip);
             }
             else if (nation.nuclearProgram)
             {
-                section.AddItem("Nuclear Program", "Active (building)");
+                section.AddItem("Nuclear Program", "Active (building)", nukesTooltip);
             }
             else
             {
-                section.AddItem("Nuclear Program", "None");
+                section.AddItem("Nuclear Program", "None", nukesTooltip);
             }
 
             if (nation.spaceFlightProgram)
@@ -1363,6 +1429,62 @@ namespace TISpeech.ReviewMode.Readers
                 (nation.rivals == null || nation.rivals.Count == 0))
             {
                 section.AddItem("No significant relations");
+            }
+
+            return section;
+        }
+
+        private ISection CreatePoliciesSection(TINationState nation, TIFactionState faction)
+        {
+            var section = new DataSection("Policies");
+
+            // Get the game's comprehensive policy tooltip
+            string policiesTooltip = GetCleanTooltip(() => NationInfoController.BuildPoliciesTooltip(nation, includeDescription: true));
+
+            // Add a summary item with the full tooltip as detail
+            var availablePolicies = nation.availableSetPolicyOptions(includeCancel: false);
+            int policyCount = availablePolicies?.Count ?? 0;
+
+            section.AddItem("Available Policies", $"{policyCount} options", policiesTooltip);
+
+            // List each available policy as a separate item for navigation
+            if (availablePolicies != null)
+            {
+                foreach (var policy in availablePolicies)
+                {
+                    try
+                    {
+                        string policyName = policy.GetDisplayName();
+                        var possibleTargets = policy.GetPossibleTargets(nation);
+
+                        // Skip if requires targets but has none
+                        if (policy.RequiresTargets() && (possibleTargets == null || possibleTargets.Count == 0))
+                            continue;
+
+                        string targetInfo = "";
+                        if (policy.RequiresTargets() && possibleTargets.Count > 0)
+                        {
+                            if (possibleTargets.Count == 1 && possibleTargets[0] != nation)
+                            {
+                                targetInfo = $" (target: {possibleTargets[0].displayName})";
+                            }
+                            else if (possibleTargets.Count > 1)
+                            {
+                                var targetNames = possibleTargets.Take(3).Select(t => t.displayName);
+                                string targetList = string.Join(", ", targetNames);
+                                if (possibleTargets.Count > 3)
+                                    targetList += $" +{possibleTargets.Count - 3} more";
+                                targetInfo = $" (targets: {targetList})";
+                            }
+                        }
+
+                        section.AddItem(policyName, targetInfo.Trim());
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Warning($"Error reading policy: {ex.Message}");
+                    }
+                }
             }
 
             return section;
@@ -1866,12 +1988,12 @@ namespace TISpeech.ReviewMode.Readers
 
         private string GetControlPointName(TIControlPoint cp, TINationState nation)
         {
-            // Control points are identified by type and index
-            int index = nation.controlPoints?.IndexOf(cp) ?? 0;
-            string typeName = cp.controlPointType.ToString();
+            // Use the game's display name for the control point type
+            string typeName = cp.controlPointTypeDisplayName ?? cp.controlPointType.ToString();
             string defended = cp.defended ? ", defended" : "";
             string crackdown = cp.benefitsDisabled ? ", crackdown" : "";
-            return $"CP {index + 1} ({typeName}{defended}{crackdown})";
+            string executive = cp.executive ? " (Executive)" : "";
+            return $"{typeName}{executive}{defended}{crackdown}";
         }
 
         private string GetPrioritySummary(TIControlPoint cp)
@@ -1895,38 +2017,8 @@ namespace TISpeech.ReviewMode.Readers
 
         private string GetControlPointDetail(TIControlPoint cp, TINationState nation)
         {
-            var sb = new StringBuilder();
-            sb.AppendLine($"Control Point in {nation.displayName}");
-            sb.AppendLine($"Type: {cp.controlPointType}");
-
-            if (cp.defended)
-            {
-                sb.AppendLine("Status: Defended");
-            }
-            if (cp.benefitsDisabled)
-            {
-                sb.AppendLine("Status: Benefits disabled (crackdown)");
-            }
-
-            sb.AppendLine();
-            sb.AppendLine("Priorities:");
-
-            foreach (PriorityType priority in Enum.GetValues(typeof(PriorityType)))
-            {
-                if (priority == PriorityType.None)
-                    continue;
-
-                int value = cp.GetControlPointPriority(priority, checkValid: false);
-                bool valid = nation.ValidPriority(priority);
-
-                if (value > 0 || valid)
-                {
-                    string status = valid ? "" : " (unavailable)";
-                    sb.AppendLine($"  {GetPriorityDisplayName(priority)}: {value}{status}");
-                }
-            }
-
-            return sb.ToString();
+            // Use the game's own tooltip builder and clean the text
+            return GetCleanTooltip(() => NationInfoController.ControlPointTooltip(nation, cp));
         }
 
         private string GetPriorityShortName(PriorityType priority)
