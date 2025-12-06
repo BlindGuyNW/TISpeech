@@ -108,6 +108,34 @@ namespace TISpeech.ReviewMode
         private float lastInputTime = 0f;
         private const float INPUT_DEBOUNCE = 0.15f;
 
+        /// <summary>
+        /// Block the game from also processing the Escape key.
+        /// Call this whenever Review Mode consumes an Escape key press.
+        /// </summary>
+        private void BlockGameEscapeProcessing()
+        {
+            GameControl.handlingException = true;
+            needToClearHandlingException = true;
+        }
+
+        /// <summary>
+        /// Open the escape menu and enter escape menu mode.
+        /// </summary>
+        private void OpenEscapeMenu()
+        {
+            var optionsScreen = UnityEngine.Object.FindObjectOfType<OptionsScreenController>();
+            if (optionsScreen != null)
+            {
+                optionsScreen.Show();
+                escapeMenuMode = new EscapeMenuSubMode();
+                escapeMenuMode.Activate();
+            }
+            else
+            {
+                TISpeechMod.Speak("Could not open menu", interrupt: true);
+            }
+        }
+
         #region Lifecycle
 
         private void Awake()
@@ -524,6 +552,18 @@ namespace TISpeech.ReviewMode
                 return;
             }
 
+            // Check if diplomacy screen is open - enter diplomacy mode directly
+            if (DiplomacySubMode.IsDiplomacyVisible())
+            {
+                var diplomacyController = UnityEngine.Object.FindObjectOfType<DiplomacyController>();
+                if (diplomacyController != null)
+                {
+                    MelonLogger.Msg("Review mode activated with diplomacy screen open - entering diplomacy mode");
+                    EnterDiplomacyMode(diplomacyController);
+                    return;
+                }
+            }
+
             // Reset navigation to initial state (Council screen)
             navigation.Reset();
 
@@ -680,23 +720,10 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Alternative item navigation (Numpad 4/6) - same as 8/2 for consistency
-            if (Input.GetKeyDown(KeyCode.Keypad4))
-            {
-                navigation.Previous();
-                TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
-                return true;
-            }
-            if (Input.GetKeyDown(KeyCode.Keypad6))
-            {
-                navigation.Next();
-                TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
-                return true;
-            }
-
-            // Drill down / Activate (Numpad Enter, Numpad 5, Enter, Right arrow)
+            // Drill down / Activate (Numpad Enter, Numpad 5, Enter, Right arrow, Numpad 6)
             if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
-                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow))
+                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow) ||
+                Input.GetKeyDown(KeyCode.Keypad6))
             {
                 var result = navigation.DrillDown();
                 switch (result)
@@ -726,9 +753,14 @@ namespace TISpeech.ReviewMode
                 return true;
             }
 
-            // Back out (Escape, Left arrow, Backspace)
-            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
+            // Back out (Left arrow, Numpad 4, Backspace, Escape)
+            if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Keypad4) ||
+                Input.GetKeyDown(KeyCode.Backspace) || Input.GetKeyDown(KeyCode.Escape))
             {
+                // Block game from also processing Escape
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
+
                 if (navigation.BackOut())
                 {
                     TISpeechMod.Speak(navigation.GetCurrentAnnouncement(), interrupt: true);
@@ -736,40 +768,9 @@ namespace TISpeech.ReviewMode
                 }
                 else
                 {
-                    // At top level - Escape opens the escape menu, other keys deactivate
-                    if (Input.GetKeyDown(KeyCode.Escape))
-                    {
-                        // Open the escape menu ourselves and prevent the game from closing it
-                        // by temporarily setting GameControl.handlingException = true
-                        var optionsScreen = UnityEngine.Object.FindObjectOfType<OptionsScreenController>();
-                        if (optionsScreen != null)
-                        {
-                            // Set handlingException to prevent game's CheckKeys from processing Escape
-                            GameControl.handlingException = true;
-                            needToClearHandlingException = true;
-
-                            // Show the escape menu
-                            optionsScreen.Show();
-
-                            // Activate escape menu mode
-                            escapeMenuMode = new EscapeMenuSubMode();
-                            escapeMenuMode.Activate();
-
-                            return true; // Consume the input
-                        }
-                        else
-                        {
-                            // Fallback: deactivate if we can't find the options screen
-                            DeactivateReviewMode();
-                            return true;
-                        }
-                    }
-                    else
-                    {
-                        // Left arrow or Backspace at top level - deactivate review mode
-                        DeactivateReviewMode();
-                        return true;
-                    }
+                    // At top level - open the escape menu
+                    OpenEscapeMenu();
+                    return true;
                 }
             }
 
@@ -1007,6 +1008,7 @@ namespace TISpeech.ReviewMode
             // Back out / Exit (Escape)
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                BlockGameEscapeProcessing();
                 // If on a sub-screen, go back to main menu
                 if (currentMenuScreenIndex > 0)
                 {
@@ -1138,6 +1140,7 @@ namespace TISpeech.ReviewMode
             // Escape key - invoke "Back to Game" (but not immediately after activation)
             if (Input.GetKeyDown(KeyCode.Escape) && !escapeMenuMode.IsInActivationGracePeriod())
             {
+                BlockGameEscapeProcessing();
                 escapeMenuMode.InvokeBackToGame();
                 escapeMenuMode.Deactivate();
                 escapeMenuMode = null;
@@ -1223,6 +1226,9 @@ namespace TISpeech.ReviewMode
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Backspace) ||
                 Input.GetKeyDown(KeyCode.LeftArrow))
             {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
+
                 if (codexMode.CurrentLevel == CodexSubMode.NavigationLevel.Content)
                 {
                     // Back out from content to topics
@@ -1280,6 +1286,7 @@ namespace TISpeech.ReviewMode
             // Escape - cancel text input
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                BlockGameEscapeProcessing();
                 string result = escapeMenuMode.CancelTextInput();
                 TISpeechMod.Speak(result, interrupt: true);
                 return true;
@@ -1560,6 +1567,8 @@ namespace TISpeech.ReviewMode
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Keypad0) ||
                 Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
             {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
                 CancelSelection();
                 return true;
             }
@@ -1696,6 +1705,7 @@ namespace TISpeech.ReviewMode
             // Exit grid mode: Escape
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                BlockGameEscapeProcessing();
                 ExitGridMode();
                 return true;
             }
@@ -1827,6 +1837,7 @@ namespace TISpeech.ReviewMode
             // Escape - select and activate close option
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                BlockGameEscapeProcessing();
                 if (notificationMode.SelectCloseOption())
                 {
                     var option = notificationMode.CurrentOption;
@@ -1949,6 +1960,7 @@ namespace TISpeech.ReviewMode
             // Escape - just exit (cancel the diplomacy)
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                BlockGameEscapeProcessing();
                 TISpeechMod.Speak("Cancelling diplomacy", interrupt: true);
                 ExitGreetingMode();
                 return true;
@@ -2110,6 +2122,9 @@ namespace TISpeech.ReviewMode
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) ||
                 Input.GetKeyDown(KeyCode.Backspace))
             {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
+
                 if (diplomacyMode.BackOut())
                 {
                     // Backed out to section level
@@ -2257,6 +2272,9 @@ namespace TISpeech.ReviewMode
             // Go back (Escape, Left arrow, Backspace)
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
             {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
+
                 bool stayInMode = policyMode.GoBack();
                 if (!stayInMode)
                 {
@@ -2446,6 +2464,9 @@ namespace TISpeech.ReviewMode
             // Cancel and abort mission (Escape, Left arrow, Backspace)
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
             {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
+
                 TISpeechMod.Speak("Cancelling and aborting mission", interrupt: true);
                 missionTargetMode.Cancel();
                 // Mode will be exited by the patch when cancel completes
@@ -2634,6 +2655,9 @@ namespace TISpeech.ReviewMode
             // Escape also exits (user may want to dismiss via mouse)
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
             {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
+
                 TISpeechMod.Speak("Exiting Review Mode. Prompt still pending.", interrupt: true);
                 DeactivateReviewMode();
                 return true;
@@ -2751,6 +2775,9 @@ namespace TISpeech.ReviewMode
             // Back out (Escape, Left arrow, Backspace)
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
             {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
+
                 shipDesignerMode.Back();
                 return true;
             }
@@ -3278,6 +3305,7 @@ namespace TISpeech.ReviewMode
                 // Escape - cancel and go back
                 if (Input.GetKeyDown(KeyCode.Escape))
                 {
+                    BlockGameEscapeProcessing();
                     transferMode.Back();
                     return true;
                 }
@@ -3311,6 +3339,9 @@ namespace TISpeech.ReviewMode
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Backspace) ||
                 Input.GetKeyDown(KeyCode.LeftArrow))
             {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
+
                 transferMode.Back();
                 return true;
             }
@@ -4021,6 +4052,7 @@ namespace TISpeech.ReviewMode
             // Exit combat review mode (Escape) - but don't exit combat itself
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                BlockGameEscapeProcessing();
                 TISpeechMod.Speak("Press a stance option to proceed with combat, or Cancel Attack if available", interrupt: true);
                 return true;
             }
