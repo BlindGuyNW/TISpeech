@@ -47,6 +47,7 @@ namespace TISpeech.ReviewMode
         private GlobalStatusScreen globalStatusScreen;
         private LedgerScreen ledgerScreen;
         private EventsScreen eventsScreen;
+        private ResourcesScreen resourcesScreen;
 
         // Selection sub-mode (for multi-step actions like mission assignment)
         private SelectionSubMode selectionMode = null;
@@ -238,6 +239,9 @@ namespace TISpeech.ReviewMode
             eventsScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
             eventsScreen.OnNavigateToGameState = NavigateToGameState;
 
+            resourcesScreen = new ResourcesScreen();
+            resourcesScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+
             // Register in-game screens with navigation
             var screens = new List<ScreenBase>
             {
@@ -253,7 +257,8 @@ namespace TISpeech.ReviewMode
                 alienThreatScreen,
                 globalStatusScreen,
                 ledgerScreen,
-                eventsScreen
+                eventsScreen,
+                resourcesScreen
             };
 
             navigation.RegisterScreens(screens);

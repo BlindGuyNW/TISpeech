@@ -19,6 +19,9 @@ namespace TISpeech
         private static bool altLPressed = false;
         private static bool altDPressed = false;
         private static bool altOPressed = false;
+        private static bool altCPressed = false;
+        private static bool altBPressed = false;
+        private static bool altMPressed = false;
         private static bool numpad0Pressed = false;
         private static bool ctrlRPressed = false;
 
@@ -64,13 +67,13 @@ namespace TISpeech
                     ctrlRPressed = false;
                 }
 
-                // Alt+S - Screen info/status
+                // Alt+S - Space resources
                 if (altHeld && Input.GetKeyDown(KeyCode.S))
                 {
                     if (!altSPressed)
                     {
                         altSPressed = true;
-                        ReadScreenInfo();
+                        ReadSpaceResources();
                     }
                 }
                 else if (!Input.GetKey(KeyCode.S))
@@ -133,6 +136,48 @@ namespace TISpeech
                 {
                     altOPressed = false;
                 }
+
+                // Alt+C - Control points
+                if (altHeld && Input.GetKeyDown(KeyCode.C))
+                {
+                    if (!altCPressed)
+                    {
+                        altCPressed = true;
+                        ReadControlPoints();
+                    }
+                }
+                else if (!Input.GetKey(KeyCode.C))
+                {
+                    altCPressed = false;
+                }
+
+                // Alt+B - Boost resources
+                if (altHeld && Input.GetKeyDown(KeyCode.B))
+                {
+                    if (!altBPressed)
+                    {
+                        altBPressed = true;
+                        ReadBoostResources();
+                    }
+                }
+                else if (!Input.GetKey(KeyCode.B))
+                {
+                    altBPressed = false;
+                }
+
+                // Alt+M - Mission control
+                if (altHeld && Input.GetKeyDown(KeyCode.M))
+                {
+                    if (!altMPressed)
+                    {
+                        altMPressed = true;
+                        ReadMissionControl();
+                    }
+                }
+                else if (!Input.GetKey(KeyCode.M))
+                {
+                    altMPressed = false;
+                }
             }
             catch (Exception ex)
             {
@@ -174,25 +219,59 @@ namespace TISpeech
         }
 
         /// <summary>
-        /// Alt+S - Read information about the current screen
+        /// Alt+S - Read space resources (Water, Volatiles, Metals, NobleMetals, Fissiles, Antimatter, Exotics)
         /// </summary>
-        private static void ReadScreenInfo()
+        private static void ReadSpaceResources()
         {
             try
             {
-                var announcement = new StringBuilder();
-                announcement.Append("Screen info command. ");
+                if (GameControl.control == null || GameControl.control.activePlayer == null)
+                {
+                    TISpeechMod.Speak("No active game session", interrupt: true);
+                    return;
+                }
 
-                // TODO: Implement screen detection and info reading
-                announcement.Append("This feature is under development.");
+                var faction = GameControl.control.activePlayer;
+                var announcement = new StringBuilder();
+                announcement.Append("Space resources. ");
+
+                var spaceResources = new[]
+                {
+                    FactionResource.Water,
+                    FactionResource.Volatiles,
+                    FactionResource.Metals,
+                    FactionResource.NobleMetals,
+                    FactionResource.Fissiles,
+                    FactionResource.Antimatter,
+                    FactionResource.Exotics
+                };
+
+                foreach (var resource in spaceResources)
+                {
+                    float current = faction.GetCurrentResourceAmount(resource);
+                    float monthlyIncome = faction.GetMonthlyIncome(resource);
+
+                    string resourceName = GetFriendlyResourceName(resource);
+                    announcement.Append($"{resourceName}: {current:F1}");
+
+                    if (monthlyIncome != 0)
+                    {
+                        string sign = monthlyIncome > 0 ? "plus" : "minus";
+                        announcement.Append($", {sign} {Math.Abs(monthlyIncome):F1} per month. ");
+                    }
+                    else
+                    {
+                        announcement.Append(". ");
+                    }
+                }
 
                 TISpeechMod.Speak(announcement.ToString(), interrupt: true);
-                MelonLogger.Msg($"Screen info: {announcement}");
+                MelonLogger.Msg($"Space resources: {announcement}");
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"Error reading screen info: {ex.Message}");
-                TISpeechMod.Speak("Error reading screen information", interrupt: true);
+                MelonLogger.Error($"Error reading space resources: {ex.Message}");
+                TISpeechMod.Speak("Error reading space resources", interrupt: true);
             }
         }
 
@@ -320,6 +399,167 @@ namespace TISpeech
             {
                 MelonLogger.Error($"Error reading objectives: {ex.Message}");
                 TISpeechMod.Speak("Error reading objectives", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Alt+C - Read control point status
+        /// </summary>
+        private static void ReadControlPoints()
+        {
+            try
+            {
+                if (GameControl.control == null || GameControl.control.activePlayer == null)
+                {
+                    TISpeechMod.Speak("No active game session", interrupt: true);
+                    return;
+                }
+
+                var faction = GameControl.control.activePlayer;
+                var announcement = new StringBuilder();
+                announcement.Append("Control points. ");
+
+                int cpCount = faction.controlPoints?.Count ?? 0;
+                float cpUsage = faction.GetBaselineControlPointMaintenanceCost();
+                float cpCap = faction.GetControlPointMaintenanceFreebieCap();
+
+                // Main readout: usage / cap (count)
+                announcement.Append($"Usage {cpUsage:F0} of {cpCap:F0} cap, {cpCount} held. ");
+
+                // Check if over cap
+                float overage = cpUsage - cpCap;
+                if (overage > 0)
+                {
+                    float annualPenalty = faction.GetAnnualControlPointMaintenanceCost();
+                    float monthlyPenalty = annualPenalty / 12f;
+                    announcement.Append($"Over cap by {overage:F1}. Costing {monthlyPenalty:F1} influence per month. ");
+
+                    float missionPenalty = faction.GetAveragedControlPointCapPenaltyToMissions();
+                    if (missionPenalty > 0)
+                    {
+                        announcement.Append($"Mission penalty: {missionPenalty:F1}%. ");
+                    }
+                }
+                else
+                {
+                    float headroom = cpCap - cpUsage;
+                    announcement.Append($"Headroom: {headroom:F1} before penalty. ");
+                }
+
+                TISpeechMod.Speak(announcement.ToString(), interrupt: true);
+                MelonLogger.Msg($"Control points: {announcement}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error reading control points: {ex.Message}");
+                TISpeechMod.Speak("Error reading control points", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Alt+B - Read boost resources (detailed)
+        /// </summary>
+        private static void ReadBoostResources()
+        {
+            try
+            {
+                if (GameControl.control == null || GameControl.control.activePlayer == null)
+                {
+                    TISpeechMod.Speak("No active game session", interrupt: true);
+                    return;
+                }
+
+                var faction = GameControl.control.activePlayer;
+                var announcement = new StringBuilder();
+                announcement.Append("Boost. ");
+
+                float current = faction.GetCurrentResourceAmount(FactionResource.Boost);
+                float monthlyIncome = faction.GetMonthlyIncome(FactionResource.Boost);
+
+                announcement.Append($"{current:F1} stockpile");
+
+                if (monthlyIncome != 0)
+                {
+                    string sign = monthlyIncome > 0 ? "plus" : "minus";
+                    announcement.Append($", {sign} {Math.Abs(monthlyIncome):F1} per month");
+                }
+                announcement.Append(". ");
+
+                TISpeechMod.Speak(announcement.ToString(), interrupt: true);
+                MelonLogger.Msg($"Boost: {announcement}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error reading boost: {ex.Message}");
+                TISpeechMod.Speak("Error reading boost resources", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Alt+M - Read mission control status
+        /// </summary>
+        private static void ReadMissionControl()
+        {
+            try
+            {
+                if (GameControl.control == null || GameControl.control.activePlayer == null)
+                {
+                    TISpeechMod.Speak("No active game session", interrupt: true);
+                    return;
+                }
+
+                var faction = GameControl.control.activePlayer;
+                var announcement = new StringBuilder();
+                announcement.Append("Mission Control. ");
+
+                int mcIncome = faction.MissionControlIncome;
+                int mcUsage = faction.GetMissionControlUsage();
+                int mcAvailable = faction.AvailableMissionControl;
+                int mcShortage = faction.MissionControlShortage;
+
+                announcement.Append($"Income: {mcIncome}. Usage: {mcUsage}. ");
+
+                if (mcShortage > 0)
+                {
+                    announcement.Append($"Shortage: {mcShortage}. ");
+                }
+                else
+                {
+                    announcement.Append($"Available: {mcAvailable}. ");
+                }
+
+                TISpeechMod.Speak(announcement.ToString(), interrupt: true);
+                MelonLogger.Msg($"Mission Control: {announcement}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error reading mission control: {ex.Message}");
+                TISpeechMod.Speak("Error reading mission control", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Get a friendly display name for a faction resource
+        /// </summary>
+        private static string GetFriendlyResourceName(FactionResource resource)
+        {
+            switch (resource)
+            {
+                case FactionResource.Money: return "Money";
+                case FactionResource.Influence: return "Influence";
+                case FactionResource.Operations: return "Operations";
+                case FactionResource.Research: return "Research";
+                case FactionResource.Projects: return "Projects";
+                case FactionResource.Boost: return "Boost";
+                case FactionResource.MissionControl: return "Mission Control";
+                case FactionResource.Water: return "Water";
+                case FactionResource.Volatiles: return "Volatiles";
+                case FactionResource.Metals: return "Metals";
+                case FactionResource.NobleMetals: return "Noble Metals";
+                case FactionResource.Fissiles: return "Fissiles";
+                case FactionResource.Antimatter: return "Antimatter";
+                case FactionResource.Exotics: return "Exotics";
+                default: return resource.ToString();
             }
         }
     }
