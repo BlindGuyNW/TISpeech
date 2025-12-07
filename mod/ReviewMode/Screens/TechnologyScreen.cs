@@ -113,10 +113,19 @@ namespace TISpeech.ReviewMode.Screens
                     items.Add(new TechScreenItem { Type = ItemType.ResearchSlot, SlotIndex = slot });
                 }
 
-                // Slots 3-5: Faction projects
-                for (int slot = 3; slot < 6; slot++)
+                // Slot 3: HQ Project (always available)
+                items.Add(new TechScreenItem { Type = ItemType.ResearchSlot, SlotIndex = 3 });
+
+                // Slot 4: Org Project (only if unlocked via orgs with project slots)
+                if (faction.OrgProjectAllowed())
                 {
-                    items.Add(new TechScreenItem { Type = ItemType.ResearchSlot, SlotIndex = slot });
+                    items.Add(new TechScreenItem { Type = ItemType.ResearchSlot, SlotIndex = 4 });
+                }
+
+                // Slot 5: Hab Project (only if unlocked via hab modules with project slots)
+                if (faction.HabProjectAllowed())
+                {
+                    items.Add(new TechScreenItem { Type = ItemType.ResearchSlot, SlotIndex = 5 });
                 }
 
                 // Add tech browser item (provides category-based sections)
