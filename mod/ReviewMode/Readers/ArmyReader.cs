@@ -127,10 +127,9 @@ namespace TISpeech.ReviewMode.Readers
             // Info section
             sections.Add(CreateInfoSection(army));
 
-            // Operations section - only for player's armies
-            bool isPlayerArmy = army.faction == playerFaction ||
-                               (army.homeNation?.executiveFaction == playerFaction);
-            if (isPlayerArmy)
+            // Operations section - only for armies where army.faction == playerFaction
+            // The game assigns armies to factions through control points, not executive control
+            if (army.faction == playerFaction)
             {
                 sections.Add(CreateOperationsSection(army, playerFaction));
             }

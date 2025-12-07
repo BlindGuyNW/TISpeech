@@ -1037,8 +1037,6 @@ namespace TISpeech.ReviewMode.Readers
                 return section;
             }
 
-            bool canControlArmies = nation.executiveFaction == playerFaction;
-
             foreach (var army in nation.armies)
             {
                 // Build army summary
@@ -1056,7 +1054,11 @@ namespace TISpeech.ReviewMode.Readers
                 // Build detailed info
                 string detail = BuildArmyDetail(army);
 
-                if (canControlArmies)
+                // Check if player can control this specific army (army.faction == playerFaction)
+                // The game assigns armies to factions through control points
+                bool canControlThisArmy = army.faction == playerFaction;
+
+                if (canControlThisArmy)
                 {
                     // Add as activatable item that opens army operations
                     section.AddItem(label, value, detail,
@@ -1064,7 +1066,9 @@ namespace TISpeech.ReviewMode.Readers
                 }
                 else
                 {
-                    section.AddItem(label, value, detail);
+                    // Show controlling faction info for armies we don't control
+                    string controlledBy = army.faction?.displayName ?? "uncontrolled";
+                    section.AddItem(label, $"{value}, {controlledBy}", detail);
                 }
             }
 
