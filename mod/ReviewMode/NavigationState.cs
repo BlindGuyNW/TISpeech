@@ -103,6 +103,46 @@ namespace TISpeech.ReviewMode
         }
 
         /// <summary>
+        /// Find a screen by name. Returns the screen index, or -1 if not found.
+        /// </summary>
+        public int FindScreenByName(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return -1;
+
+            for (int i = 0; i < screens.Count; i++)
+            {
+                if (screens[i].Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Switch to a specific screen by index.
+        /// Resets navigation to Items level with item index 0.
+        /// </summary>
+        public void SwitchToScreen(int screenIndex)
+        {
+            if (screenIndex < 0 || screenIndex >= screens.Count)
+                return;
+
+            // Deactivate current screen
+            CurrentScreen?.OnDeactivate();
+
+            // Switch to new screen
+            currentScreenIndex = screenIndex;
+            currentItemIndex = 0;
+            currentSectionIndex = 0;
+            currentSectionItemIndex = 0;
+            currentLevel = NavigationLevel.Items;
+            currentSections = null;
+
+            // Activate new screen
+            CurrentScreen?.OnActivate();
+        }
+
+        /// <summary>
         /// Index of the current section item.
         /// </summary>
         public int CurrentSectionItemIndex => currentSectionItemIndex;
