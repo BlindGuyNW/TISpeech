@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using HarmonyLib;
 using MelonLoader;
@@ -66,18 +67,131 @@ namespace TISpeech.ReviewMode
 
         public string NationName => enactingNation?.displayName ?? "Unknown Nation";
 
+        /// <summary>
+        /// Check if the policy selection UI is currently visible.
+        /// Used by ReviewModeController to detect if we should enter policy mode on activation.
+        /// </summary>
+        public static bool IsPolicySelectionVisible()
+        {
+            try
+            {
+                var controller = UnityEngine.Object.FindObjectOfType<NotificationScreenController>();
+                if (controller == null)
+                    return false;
+
+                // Check if the master policy panel is active
+                return controller.masterPolicyPanelObject != null && controller.masterPolicyPanelObject.activeSelf;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Get the current state of the policy UI based on which panels are visible.
+        /// </summary>
+        public static PolicySelectionState? GetCurrentPolicyUIState(NotificationScreenController controller)
+        {
+            if (controller == null || controller.masterPolicyPanelObject == null || !controller.masterPolicyPanelObject.activeSelf)
+                return null;
+
+            if (controller.selectPolicyPanelObject != null && controller.selectPolicyPanelObject.activeSelf)
+                return PolicySelectionState.SelectPolicy;
+
+            if (controller.selectPolicyTargetPanelObject != null && controller.selectPolicyTargetPanelObject.activeSelf)
+                return PolicySelectionState.SelectTarget;
+
+            // If master panel is visible but neither sub-panel, we're likely in confirm state
+            // However, confirm state uses a different confirm panel mechanism
+            return PolicySelectionState.SelectPolicy; // Default to policy selection
+        }
+
+        /// <summary>
+        /// Get the current nation, councilor, and policy from the NotificationScreenController's private fields.
+        /// Returns null if the fields cannot be accessed.
+        /// </summary>
+        public static (TINationState nation, TICouncilorState councilor, TIPolicyOption currentPolicy, PolicySelectionState state)? GetPolicyContext(NotificationScreenController controller)
+        {
+            try
+            {
+                if (controller == null)
+                    return null;
+
+                // Access the private fields from NotificationScreenController
+                var nationField = typeof(NotificationScreenController).GetField("currentNation", BindingFlags.NonPublic | BindingFlags.Instance);
+                var councilorField = typeof(NotificationScreenController).GetField("currentPolicyCouncilor", BindingFlags.NonPublic | BindingFlags.Instance);
+                var policyField = typeof(NotificationScreenController).GetField("currentPolicy", BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (nationField == null || councilorField == null)
+                {
+                    MelonLogger.Warning("Could not find currentNation or currentPolicyCouncilor fields");
+                    return null;
+                }
+
+                var nation = nationField.GetValue(controller) as TINationState;
+                var councilor = councilorField.GetValue(controller) as TICouncilorState;
+                var policy = policyField?.GetValue(controller) as TIPolicyOption;
+
+                if (nation == null)
+                {
+                    MelonLogger.Warning("currentNation is null");
+                    return null;
+                }
+
+                // Determine state based on which panel is visible
+                var state = PolicySelectionState.SelectPolicy;
+                if (controller.selectPolicyTargetPanelObject != null && controller.selectPolicyTargetPanelObject.activeSelf)
+                {
+                    state = PolicySelectionState.SelectTarget;
+                }
+                else if (controller.selectPolicyPanelObject != null && controller.selectPolicyPanelObject.activeSelf)
+                {
+                    state = PolicySelectionState.SelectPolicy;
+                }
+
+                return (nation, councilor, policy, state);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error getting policy context: {ex.Message}");
+                return null;
+            }
+        }
+
         public PolicySelectionMode(NotificationScreenController controller, TINationState nation, TICouncilorState councilor)
+            : this(controller, nation, councilor, PolicySelectionState.SelectPolicy, null)
+        {
+        }
+
+        /// <summary>
+        /// Constructor that supports restoring to a specific state (e.g., when re-entering review mode).
+        /// </summary>
+        public PolicySelectionMode(NotificationScreenController controller, TINationState nation, TICouncilorState councilor,
+            PolicySelectionState initialState, TIPolicyOption currentPolicy)
         {
             this.controller = controller;
             this.enactingNation = nation;
             this.triggeringCouncilor = councilor;
-            this.State = PolicySelectionState.SelectPolicy;
             this.CurrentIndex = 0;
 
             Policies = new List<PolicyOption>();
             Targets = new List<PolicyTargetOption>();
 
             BuildPolicyList();
+
+            // If restoring to SelectTarget state and we have a policy, set it up
+            if (initialState == PolicySelectionState.SelectTarget && currentPolicy != null)
+            {
+                this.selectedPolicy = currentPolicy;
+                this.State = PolicySelectionState.SelectTarget;
+                BuildTargetList();
+                MelonLogger.Msg($"PolicySelectionMode: Restored to SelectTarget state with policy {currentPolicy.GetDisplayName()}");
+            }
+            else
+            {
+                this.State = PolicySelectionState.SelectPolicy;
+            }
         }
 
         private void BuildPolicyList()

@@ -869,6 +869,23 @@ namespace TISpeech.ReviewMode
                 return;
             }
 
+            // Check if policy selection screen is open - enter policy mode directly
+            if (PolicySelectionMode.IsPolicySelectionVisible())
+            {
+                var policyNotificationCtrl = UnityEngine.Object.FindObjectOfType<PavonisInteractive.TerraInvicta.NotificationScreenController>();
+                if (policyNotificationCtrl != null)
+                {
+                    var context = PolicySelectionMode.GetPolicyContext(policyNotificationCtrl);
+                    if (context.HasValue)
+                    {
+                        MelonLogger.Msg($"Review mode activated with policy selection open (state: {context.Value.state}) - entering policy mode");
+                        EnterPolicySelectionMode(policyNotificationCtrl, context.Value.nation, context.Value.councilor,
+                            context.Value.state, context.Value.currentPolicy);
+                        return;
+                    }
+                }
+            }
+
             // Check if diplomacy screen is open - enter diplomacy mode directly
             if (DiplomacySubMode.IsDiplomacyVisible())
             {
@@ -2503,6 +2520,15 @@ namespace TISpeech.ReviewMode
         /// </summary>
         public void EnterPolicySelectionMode(PavonisInteractive.TerraInvicta.NotificationScreenController controller, TINationState nation, TICouncilorState councilor)
         {
+            EnterPolicySelectionMode(controller, nation, councilor, PolicySelectionState.SelectPolicy, null);
+        }
+
+        /// <summary>
+        /// Enter policy selection mode with specific state (for re-entering review mode when policy UI is open).
+        /// </summary>
+        public void EnterPolicySelectionMode(PavonisInteractive.TerraInvicta.NotificationScreenController controller,
+            TINationState nation, TICouncilorState councilor, PolicySelectionState initialState, TIPolicyOption currentPolicy)
+        {
             try
             {
                 if (controller == null || nation == null)
@@ -2511,7 +2537,7 @@ namespace TISpeech.ReviewMode
                     return;
                 }
 
-                policyMode = new PolicySelectionMode(controller, nation, councilor);
+                policyMode = new PolicySelectionMode(controller, nation, councilor, initialState, currentPolicy);
 
                 if (policyMode.Policies.Count == 0)
                 {
@@ -2521,7 +2547,7 @@ namespace TISpeech.ReviewMode
                 }
 
                 TISpeechMod.Speak(policyMode.GetEntryAnnouncement(), interrupt: true);
-                MelonLogger.Msg($"Entered policy selection mode for {nation.displayName} with {policyMode.Policies.Count} policies");
+                MelonLogger.Msg($"Entered policy selection mode for {nation.displayName} with {policyMode.Policies.Count} policies, state: {initialState}");
             }
             catch (Exception ex)
             {
