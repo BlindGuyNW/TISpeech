@@ -75,40 +75,28 @@ namespace TISpeech.ReviewMode.Readers
             if (org == null)
                 return "Unknown organization";
 
-            var sb = new StringBuilder();
-            sb.AppendLine($"Organization: {org.displayName}");
-            sb.AppendLine($"Tier: {org.tier}");
-
-            if (org.template != null)
+            try
             {
-                sb.AppendLine($"Type: {org.template.orgType}");
+                // Use the game's built-in description method which includes:
+                // - Name, tier, home region
+                // - Required/prohibited traits
+                // - Why you can't purchase (ideology, nation requirements, etc.)
+                // - Missions granted
+                // - All income bonuses
+                // - All stat bonuses
+                // - All priority bonuses
+                // - Tech category bonuses
+                // - Sale price if owned
+                var faction = GameControl.control?.activePlayer;
+                string description = org.description(includeDisplayName: true, faction);
+                return TISpeechMod.CleanText(description);
             }
-
-            if (org.homeRegion != null)
+            catch (Exception ex)
             {
-                sb.AppendLine($"Home Region: {org.homeRegion.displayName}");
+                MelonLogger.Warning($"Error getting org description: {ex.Message}");
+                // Fallback to basic info
+                return $"{org.displayName}, Tier {org.tier}";
             }
-
-            // Income
-            sb.AppendLine("Monthly Income:");
-            if (org.incomeMoney_month != 0) sb.AppendLine($"  Money: {org.incomeMoney_month:+#;-#;0}");
-            if (org.incomeInfluence_month != 0) sb.AppendLine($"  Influence: {org.incomeInfluence_month:+#;-#;0}");
-            if (org.incomeOps_month != 0) sb.AppendLine($"  Operations: {org.incomeOps_month:+#;-#;0}");
-            if (org.incomeBoost_month != 0) sb.AppendLine($"  Boost: {org.incomeBoost_month:+#;-#;0}");
-            if (org.incomeResearch_month != 0) sb.AppendLine($"  Research: {org.incomeResearch_month:+#;-#;0}");
-            if (org.incomeMissionControl != 0) sb.AppendLine($"  Mission Control: {org.incomeMissionControl:+#;-#;0}");
-
-            // Stat bonuses
-            sb.AppendLine("Stat Bonuses:");
-            if (org.persuasion != 0) sb.AppendLine($"  Persuasion: {org.persuasion:+#;-#;0}");
-            if (org.command != 0) sb.AppendLine($"  Command: {org.command:+#;-#;0}");
-            if (org.investigation != 0) sb.AppendLine($"  Investigation: {org.investigation:+#;-#;0}");
-            if (org.espionage != 0) sb.AppendLine($"  Espionage: {org.espionage:+#;-#;0}");
-            if (org.administration != 0) sb.AppendLine($"  Administration: {org.administration:+#;-#;0}");
-            if (org.science != 0) sb.AppendLine($"  Science: {org.science:+#;-#;0}");
-            if (org.security != 0) sb.AppendLine($"  Security: {org.security:+#;-#;0}");
-
-            return sb.ToString();
         }
 
         public List<ISection> GetSections(TIOrgState org)
@@ -127,7 +115,38 @@ namespace TISpeech.ReviewMode.Readers
             if (org == null)
                 return sections;
 
-            // Info section
+            var faction = GameControl.control?.activePlayer;
+
+            // Full Description section - uses the game's built-in tooltip text
+            var descSection = new DataSection("Description");
+            try
+            {
+                string fullDescription = org.description(includeDisplayName: false, faction);
+                string cleanDescription = TISpeechMod.CleanText(fullDescription);
+
+                // Split into manageable items for navigation
+                var lines = cleanDescription.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var line in lines)
+                {
+                    string trimmed = line.Trim();
+                    if (!string.IsNullOrWhiteSpace(trimmed))
+                    {
+                        descSection.AddItem(trimmed);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error building org description section: {ex.Message}");
+                descSection.AddItem("Description unavailable");
+            }
+
+            if (descSection.ItemCount > 0)
+            {
+                sections.Add(descSection);
+            }
+
+            // Info section - basic info for quick reference
             var infoSection = new DataSection("Info");
             infoSection.AddItem("Name", org.displayName);
             infoSection.AddItem("Tier", org.tier.ToString());
@@ -144,13 +163,6 @@ namespace TISpeech.ReviewMode.Readers
 
             sections.Add(infoSection);
 
-            // Bonuses section
-            var bonusSection = BuildBonusSection(org);
-            if (bonusSection.ItemCount > 0)
-            {
-                sections.Add(bonusSection);
-            }
-
             // Actions section (context-dependent)
             var actionsSection = BuildActionsSection(org, context, assignedCouncilor);
             if (actionsSection.ItemCount > 0)
@@ -159,68 +171,6 @@ namespace TISpeech.ReviewMode.Readers
             }
 
             return sections;
-        }
-
-        private DataSection BuildBonusSection(TIOrgState org)
-        {
-            var bonusSection = new DataSection("Bonuses");
-
-            // Income bonuses
-            if (org.incomeMoney_month != 0)
-                bonusSection.AddItem("Money/month", FormatBonus(org.incomeMoney_month));
-            if (org.incomeInfluence_month != 0)
-                bonusSection.AddItem("Influence/month", FormatBonus(org.incomeInfluence_month));
-            if (org.incomeOps_month != 0)
-                bonusSection.AddItem("Operations/month", FormatBonus(org.incomeOps_month));
-            if (org.incomeBoost_month != 0)
-                bonusSection.AddItem("Boost/month", FormatBonus(org.incomeBoost_month));
-            if (org.incomeResearch_month != 0)
-                bonusSection.AddItem("Research/month", FormatBonus(org.incomeResearch_month));
-            if (org.incomeMissionControl != 0)
-                bonusSection.AddItem("Mission Control", FormatBonus(org.incomeMissionControl));
-
-            // Stat bonuses
-            if (org.persuasion != 0)
-                bonusSection.AddItem("Persuasion", FormatBonus(org.persuasion));
-            if (org.command != 0)
-                bonusSection.AddItem("Command", FormatBonus(org.command));
-            if (org.investigation != 0)
-                bonusSection.AddItem("Investigation", FormatBonus(org.investigation));
-            if (org.espionage != 0)
-                bonusSection.AddItem("Espionage", FormatBonus(org.espionage));
-            if (org.administration != 0)
-                bonusSection.AddItem("Administration", FormatBonus(org.administration));
-            if (org.science != 0)
-                bonusSection.AddItem("Science", FormatBonus(org.science));
-            if (org.security != 0)
-                bonusSection.AddItem("Security", FormatBonus(org.security));
-
-            // Other bonuses
-            if (org.economyBonus != 0)
-                bonusSection.AddItem("Economy Bonus", FormatPercentBonus(org.economyBonus));
-            if (org.welfareBonus != 0)
-                bonusSection.AddItem("Welfare Bonus", FormatPercentBonus(org.welfareBonus));
-            if (org.militaryBonus != 0)
-                bonusSection.AddItem("Military Bonus", FormatPercentBonus(org.militaryBonus));
-            if (org.knowledgeBonus != 0)
-                bonusSection.AddItem("Knowledge Bonus", FormatPercentBonus(org.knowledgeBonus));
-            if (org.unityBonus != 0)
-                bonusSection.AddItem("Unity Bonus", FormatPercentBonus(org.unityBonus));
-            if (org.governmentBonus != 0)
-                bonusSection.AddItem("Government Bonus", FormatPercentBonus(org.governmentBonus));
-            if (org.spoilsBonus != 0)
-                bonusSection.AddItem("Spoils Bonus", FormatPercentBonus(org.spoilsBonus));
-            if (org.miningBonus != 0)
-                bonusSection.AddItem("Mining Bonus", FormatPercentBonus(org.miningBonus));
-            if (org.spaceflightBonus != 0)
-                bonusSection.AddItem("Spaceflight Bonus", FormatPercentBonus(org.spaceflightBonus));
-            if (org.XPModifier != 0)
-                bonusSection.AddItem("XP Modifier", FormatPercentBonus(org.XPModifier));
-
-            if (org.projectCapacityGranted > 0)
-                bonusSection.AddItem("Project Slots", $"+{org.projectCapacityGranted}");
-
-            return bonusSection;
         }
 
         private DataSection BuildActionsSection(TIOrgState org, OrgContext context, TICouncilorState assignedCouncilor)
@@ -258,13 +208,23 @@ namespace TISpeech.ReviewMode.Readers
 
         private void BuildMarketActions(DataSection actionsSection, TIOrgState org, TIFactionState faction)
         {
-            // Check if faction can afford this org - don't show purchase options if not affordable
+            string costString = GetPurchaseCostString(org, faction);
+
+            // Check if faction can afford this org
             if (!faction.CanPurchaseOrg(org))
             {
-                return; // No actions available - user can still browse org info/bonuses
+                actionsSection.AddItem("Cannot Purchase", "Insufficient resources");
+                actionsSection.AddItem("Cost", costString);
+                return;
             }
 
-            string costString = GetPurchaseCostString(org, faction);
+            // Check if org is eligible for this faction at all
+            if (!org.IsEligibleForFaction(faction))
+            {
+                // The description method includes the reason, but let's be explicit here too
+                actionsSection.AddItem("Not Available", "This organization is not available to your faction");
+                return;
+            }
 
             // Purchase to Pool
             var orgCopy = org;
@@ -413,30 +373,6 @@ namespace TISpeech.ReviewMode.Readers
                 MelonLogger.Warning($"Error getting sale price: {ex.Message}");
                 return "Sale price unknown";
             }
-        }
-
-        private string FormatBonus(float value)
-        {
-            if (value > 0)
-                return $"+{value:N0}";
-            else
-                return $"{value:N0}";
-        }
-
-        private string FormatBonus(int value)
-        {
-            if (value > 0)
-                return $"+{value}";
-            else
-                return $"{value}";
-        }
-
-        private string FormatPercentBonus(float value)
-        {
-            if (value > 0)
-                return $"+{value:P0}";
-            else
-                return $"{value:P0}";
         }
     }
 }
