@@ -140,6 +140,7 @@ namespace TISpeech.ReviewMode.Readers
 
         /// <summary>
         /// Read detail with optional viewer for intel-gated enemy councilor viewing.
+        /// Formatted for screen reader clarity - stats first, sentence-style separation.
         /// </summary>
         public string ReadDetail(TICouncilorState councilor, TIFactionState viewer)
         {
@@ -155,98 +156,85 @@ namespace TISpeech.ReviewMode.Readers
             // For location-only intel, show minimal info
             if (!hasBasicIntel && hasLocationIntel)
             {
-                sb.AppendLine($"Unknown Agent");
-                sb.AppendLine($"Faction: {councilor.faction?.displayName ?? "Unknown"}");
-                sb.AppendLine($"Location: {councilor.location?.displayName ?? "Unknown"}");
-                sb.AppendLine();
-                sb.AppendLine("Intel level: Location only (0.10)");
-                sb.AppendLine("Use Investigate Councilor to learn more about this agent.");
+                sb.Append($"Unknown Agent. ");
+                sb.Append($"Faction: {councilor.faction?.displayName ?? "Unknown"}. ");
+                sb.Append($"Location: {councilor.location?.displayName ?? "Unknown"}. ");
+                sb.Append("Intel level: Location only. Use Investigate Councilor to learn more.");
                 return sb.ToString();
             }
 
-            // Has basic intel (0.25+) - show full details based on intel level
-            sb.AppendLine($"Councilor: {councilor.displayName}");
-
-            // For enemies, show faction
+            // Name and type first
+            sb.Append($"{councilor.displayName}");
             if (!isOwn)
             {
-                sb.AppendLine($"Faction: {councilor.faction?.displayName ?? "Unknown"}");
+                sb.Append($", {councilor.faction?.displayName ?? "Unknown"} faction");
             }
+            sb.Append($", {councilor.typeTemplate?.displayName ?? "Unknown"}. ");
 
-            sb.AppendLine($"Type: {councilor.typeTemplate?.displayName ?? "Unknown"}");
-
-            // Biographical info (available at basic intel level 0.25)
-            sb.AppendLine($"Age: {councilor.age}");
-            sb.AppendLine($"Hometown: {GetHometownString(councilor)}");
-            sb.AppendLine($"Gender: {GetGenderString(councilor.gender)}");
-
-            sb.AppendLine($"Location: {GetLocationString(councilor, viewer)}");
-
-            // Stats - require details intel (0.50) for enemies
+            // STATS FIRST - the most important info for gameplay decisions
             if (isOwn || (viewer != null && viewer.HasIntelOnCouncilorDetails(councilor)))
             {
-                sb.AppendLine("Stats:");
-                sb.AppendLine($"  Persuasion: {councilor.GetAttribute(CouncilorAttribute.Persuasion)}");
-                sb.AppendLine($"  Investigation: {councilor.GetAttribute(CouncilorAttribute.Investigation)}");
-                sb.AppendLine($"  Espionage: {councilor.GetAttribute(CouncilorAttribute.Espionage)}");
-                sb.AppendLine($"  Command: {councilor.GetAttribute(CouncilorAttribute.Command)}");
-                sb.AppendLine($"  Administration: {councilor.GetAttribute(CouncilorAttribute.Administration)}");
-                sb.AppendLine($"  Science: {councilor.GetAttribute(CouncilorAttribute.Science)}");
-                sb.AppendLine($"  Security: {councilor.GetAttribute(CouncilorAttribute.Security)}");
+                sb.Append($"Persuasion {councilor.GetAttribute(CouncilorAttribute.Persuasion)}. ");
+                sb.Append($"Investigation {councilor.GetAttribute(CouncilorAttribute.Investigation)}. ");
+                sb.Append($"Espionage {councilor.GetAttribute(CouncilorAttribute.Espionage)}. ");
+                sb.Append($"Command {councilor.GetAttribute(CouncilorAttribute.Command)}. ");
+                sb.Append($"Administration {councilor.GetAttribute(CouncilorAttribute.Administration)}. ");
+                sb.Append($"Science {councilor.GetAttribute(CouncilorAttribute.Science)}. ");
+                sb.Append($"Security {councilor.GetAttribute(CouncilorAttribute.Security)}. ");
 
                 // Loyalty - require secrets intel (1.0) for true loyalty
                 if (isOwn || (viewer != null && viewer.HasIntelOnCouncilorSecrets(councilor)))
                 {
-                    sb.AppendLine($"  Loyalty: {councilor.GetAttribute(CouncilorAttribute.Loyalty)}");
+                    sb.Append($"Loyalty {councilor.GetAttribute(CouncilorAttribute.Loyalty)}. ");
                 }
                 else
                 {
-                    sb.AppendLine($"  Loyalty: {councilor.GetAttribute(CouncilorAttribute.ApparentLoyalty)} (apparent)");
+                    sb.Append($"Loyalty {councilor.GetAttribute(CouncilorAttribute.ApparentLoyalty)} apparent. ");
                 }
             }
 
-            // Mission - require mission intel (0.75) for enemies
+            // Current mission
             if (isOwn || (viewer != null && viewer.HasIntelOnCouncilorMission(councilor)))
             {
                 if (councilor.activeMission != null)
                 {
-                    sb.AppendLine($"Current Mission: {councilor.activeMission.missionTemplate.displayName}");
+                    sb.Append($"Mission: {councilor.activeMission.missionTemplate.displayName}");
                     if (councilor.activeMission.target != null)
                     {
-                        sb.AppendLine($"  Target: {councilor.activeMission.target.displayName}");
+                        sb.Append($" on {councilor.activeMission.target.displayName}");
                     }
+                    sb.Append(". ");
                 }
                 else
                 {
-                    sb.AppendLine("Current Mission: None");
+                    sb.Append("No mission assigned. ");
                 }
             }
 
-            // Traits - require details intel (0.50) for enemies
+            // Location
+            sb.Append($"Location: {GetLocationString(councilor, viewer)}. ");
+
+            // Traits - listed inline
             if (isOwn || (viewer != null && viewer.HasIntelOnCouncilorDetails(councilor)))
             {
                 if (councilor.traits != null && councilor.traits.Count > 0)
                 {
-                    sb.AppendLine("Traits:");
-                    foreach (var trait in councilor.traits)
-                    {
-                        sb.AppendLine($"  {trait.displayName}");
-                    }
+                    var traitNames = councilor.traits.Select(t => t.displayName).ToList();
+                    sb.Append($"Traits: {string.Join(", ", traitNames)}. ");
                 }
             }
             else if (viewer != null && viewer.HasIntelOnCouncilorBasicData(councilor))
             {
-                // At basic intel, can only see "easily visible" traits
                 var visibleTraits = councilor.traits?.Where(t => t.easilyVisible).ToList();
                 if (visibleTraits != null && visibleTraits.Count > 0)
                 {
-                    sb.AppendLine("Visible Traits:");
-                    foreach (var trait in visibleTraits)
-                    {
-                        sb.AppendLine($"  {trait.displayName}");
-                    }
+                    var traitNames = visibleTraits.Select(t => t.displayName).ToList();
+                    sb.Append($"Visible traits: {string.Join(", ", traitNames)}. ");
                 }
             }
+
+            // Biographical info last (less important for gameplay)
+            sb.Append($"Age {councilor.age}, {GetGenderString(councilor.gender)}, from {GetHometownString(councilor)}.");
 
             return sb.ToString();
         }
