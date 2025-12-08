@@ -1203,7 +1203,9 @@ namespace TISpeech.ReviewMode
             }
 
             // Transfer planner (T) - enter theoretical transfer planner
-            if (Input.GetKeyDown(KeyCode.T))
+            // Only trigger if Alt is NOT held (Alt+T is used for alien threat in AccessibilityCommands)
+            bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+            if (Input.GetKeyDown(KeyCode.T) && !altHeld)
             {
                 EnterTheoreticalTransferMode();
                 return true;

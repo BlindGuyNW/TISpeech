@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text;
 using MelonLoader;
 using UnityEngine;
@@ -22,6 +23,7 @@ namespace TISpeech
         private static bool altCPressed = false;
         private static bool altBPressed = false;
         private static bool altMPressed = false;
+        private static bool altTPressed = false;
         private static bool numpad0Pressed = false;
         private static bool ctrlRPressed = false;
 
@@ -177,6 +179,20 @@ namespace TISpeech
                 else if (!Input.GetKey(KeyCode.M))
                 {
                     altMPressed = false;
+                }
+
+                // Alt+T - Alien threat
+                if (altHeld && Input.GetKeyDown(KeyCode.T))
+                {
+                    if (!altTPressed)
+                    {
+                        altTPressed = true;
+                        ReadAlienThreat();
+                    }
+                }
+                else if (!Input.GetKey(KeyCode.T))
+                {
+                    altTPressed = false;
                 }
             }
             catch (Exception ex)
@@ -535,6 +551,122 @@ namespace TISpeech
             {
                 MelonLogger.Error($"Error reading mission control: {ex.Message}");
                 TISpeechMod.Speak("Error reading mission control", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Alt+T - Read alien threat level
+        /// </summary>
+        private static void ReadAlienThreat()
+        {
+            try
+            {
+                if (GameControl.control == null || GameControl.control.activePlayer == null)
+                {
+                    TISpeechMod.Speak("No active game session", interrupt: true);
+                    return;
+                }
+
+                var faction = GameControl.control.activePlayer;
+
+                // Check if player is an alien proxy (Servants) - they don't see threat meter
+                if (faction.IsAlienProxy)
+                {
+                    TISpeechMod.Speak("Alien threat not applicable for Servants", interrupt: true);
+                    return;
+                }
+
+                // Check if player can detect alien activity (requires 3+ effects to unlock the meter)
+                float detectLevel = TIEffectsState.SumEffectsModifiers(Context.DetectAlienActivity, faction, 0f);
+                if (detectLevel < 3f)
+                {
+                    TISpeechMod.Speak("Alien threat meter not yet unlocked. Need more intel capability.", interrupt: true);
+                    return;
+                }
+
+                var announcement = new StringBuilder();
+                announcement.Append("Alien threat. ");
+
+                float warThreshold = TemplateManager.global.alienFactionHateWarValue; // 50 by default
+                float estimatedHate = faction.GetEstimatedAlienHate();
+
+                // Check for active war goal from aliens against us
+                var alienFaction = GameStateManager.AlienFaction();
+                TIFactionGoalState warGoal = null;
+                FactionGoal_WarOnFaction warOnFactionGoal = null;
+
+                if (alienFaction != null)
+                {
+                    warGoal = alienFaction.FindGoals(GoalType.WarOnFaction, alienFaction, faction).FirstOrDefault();
+                    warOnFactionGoal = warGoal as FactionGoal_WarOnFaction;
+                }
+
+                // Check for Total War status
+                bool isTotalWar = warOnFactionGoal != null && warOnFactionGoal.IsTotalWar;
+                bool isAtWar = warGoal != null;
+
+                if (isTotalWar)
+                {
+                    announcement.Append("Total War! All five lights red. ");
+                    announcement.Append("Aliens are fully committed to destroying your faction. ");
+                }
+                else if (isAtWar)
+                {
+                    announcement.Append("At War. Five lights red. ");
+                    announcement.Append("Aliens have declared war on your faction. ");
+                }
+                else
+                {
+                    // Calculate percentage toward war threshold
+                    float percentage = (estimatedHate / warThreshold) * 100f;
+
+                    // Describe gauge status based on lit lights
+                    string gaugeColor;
+
+                    if (percentage >= 100f)
+                    {
+                        gaugeColor = "five lights, red. War imminent";
+                    }
+                    else if (percentage >= 80f)
+                    {
+                        gaugeColor = "four lights, dark orange. High threat";
+                    }
+                    else if (percentage >= 60f)
+                    {
+                        gaugeColor = "three lights, orange. Elevated threat";
+                    }
+                    else if (percentage >= 40f)
+                    {
+                        gaugeColor = "two lights, yellow. Moderate threat";
+                    }
+                    else if (percentage >= 20f)
+                    {
+                        gaugeColor = "one light, green. Low threat";
+                    }
+                    else
+                    {
+                        gaugeColor = "no lights. Minimal threat";
+                    }
+
+                    announcement.Append($"{gaugeColor}. ");
+                    announcement.Append($"Hate level: {estimatedHate:F0} of {warThreshold:F0} war threshold. ");
+                    announcement.Append($"{percentage:F0}% to war. ");
+                }
+
+                // Add last intel update date if available
+                var lastFixed = faction.GetLastDateofFixedAlienHate();
+                if (lastFixed != null)
+                {
+                    announcement.Append($"Last updated: {lastFixed.ToCustomDateString()}. ");
+                }
+
+                TISpeechMod.Speak(announcement.ToString(), interrupt: true);
+                MelonLogger.Msg($"Alien threat: {announcement}");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error reading alien threat: {ex.Message}");
+                TISpeechMod.Speak("Error reading alien threat", interrupt: true);
             }
         }
 
