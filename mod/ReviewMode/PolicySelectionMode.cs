@@ -633,7 +633,7 @@ namespace TISpeech.ReviewMode
                     sb.Append($"{Policies.Count} policies available. ");
                     if (Policies.Count > 0)
                     {
-                        sb.Append($"1 of {Policies.Count}: {Policies[0].DisplayName}");
+                        sb.Append($"{Policies[0].DisplayName}, 1 of {Policies.Count}");
                         if (!Policies[0].IsAllowed)
                             sb.Append(" (unavailable)");
                     }
@@ -645,7 +645,7 @@ namespace TISpeech.ReviewMode
                     sb.Append($"{Targets.Count} targets available. ");
                     if (Targets.Count > 0)
                     {
-                        sb.Append($"1 of {Targets.Count}: {Targets[0].DisplayName}");
+                        sb.Append($"{Targets[0].DisplayName}, 1 of {Targets.Count}");
                         if (Targets[0].SuccessChance.HasValue)
                             sb.Append($", {Targets[0].SuccessChance.Value:P0} chance");
                     }
@@ -658,7 +658,7 @@ namespace TISpeech.ReviewMode
                     if (!string.IsNullOrEmpty(targetName))
                         sb.Append($" targeting {targetName}");
                     sb.Append("? ");
-                    sb.Append("1 of 2: Confirm. Use up/down to switch, Enter to select.");
+                    sb.Append("Confirm, 1 of 2. Use up/down to switch, Enter to select.");
                     break;
             }
 
@@ -673,7 +673,7 @@ namespace TISpeech.ReviewMode
                     if (CurrentIndex < 0 || CurrentIndex >= Policies.Count)
                         return "No policy selected";
                     var policy = Policies[CurrentIndex];
-                    string policyAnnouncement = $"{CurrentIndex + 1} of {Policies.Count}: {policy.DisplayName}";
+                    string policyAnnouncement = $"{policy.DisplayName}, {CurrentIndex + 1} of {Policies.Count}";
                     if (!policy.IsAllowed)
                         policyAnnouncement += " (unavailable)";
                     return policyAnnouncement;
@@ -682,7 +682,7 @@ namespace TISpeech.ReviewMode
                     if (CurrentIndex < 0 || CurrentIndex >= Targets.Count)
                         return "No target selected";
                     var target = Targets[CurrentIndex];
-                    string targetAnnouncement = $"{CurrentIndex + 1} of {Targets.Count}: {target.DisplayName}";
+                    string targetAnnouncement = $"{target.DisplayName}, {CurrentIndex + 1} of {Targets.Count}";
                     if (target.SuccessChance.HasValue)
                         targetAnnouncement += $", {target.SuccessChance.Value:P0} success";
                     if (target.ControllingFaction != null)
@@ -690,7 +690,7 @@ namespace TISpeech.ReviewMode
                     return targetAnnouncement;
 
                 case PolicySelectionState.Confirm:
-                    return CurrentIndex == 0 ? "1 of 2: Confirm" : "2 of 2: Cancel";
+                    return CurrentIndex == 0 ? "Confirm, 1 of 2" : "Cancel, 2 of 2";
 
                 default:
                     return "Unknown state";

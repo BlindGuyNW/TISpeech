@@ -108,7 +108,7 @@ namespace TISpeech.ReviewMode
         public string GetCurrentAnnouncement()
         {
             if (items.Count == 0) return "No items";
-            return $"{currentIndex + 1} of {items.Count}: {CurrentItem}";
+            return $"{CurrentItem}, {currentIndex + 1} of {items.Count}";
         }
 
         public string GetFullContent()
@@ -232,6 +232,27 @@ namespace TISpeech.ReviewMode
         // Kept for backwards compatibility but now checks isEnteringQuantity
         public bool IsTypingQuantity => isEnteringQuantity && !string.IsNullOrEmpty(quantityInput);
         public string TypedQuantity => quantityInput;
+
+        /// <summary>
+        /// Check if the diplomacy/trade screen is currently visible.
+        /// Used by ReviewModeController to detect if we should enter diplomacy mode on activation.
+        /// </summary>
+        public static bool IsDiplomacyVisible()
+        {
+            try
+            {
+                var controller = UnityEngine.Object.FindObjectOfType<DiplomacyController>();
+                if (controller == null)
+                    return false;
+
+                // Check if the trade canvas is active
+                return controller.tradeCanvas != null && controller.tradeCanvas.gameObject.activeInHierarchy;
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         /// <summary>
         /// Create diplomacy mode from a DiplomacyController.

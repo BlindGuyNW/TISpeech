@@ -148,7 +148,7 @@ namespace TISpeech.ReviewMode.EscapeMenu.Codex
             var topic = cachedTopics[index];
             string title = TISpeechMod.CleanText(topic.topicTitle.text);
             string suffix = topic.template.mainTopic ? ", main topic" : "";
-            return $"{index + 1} of {cachedTopics.Count}: {title}{suffix}";
+            return $"{title}{suffix}, {index + 1} of {cachedTopics.Count}";
         }
 
         #endregion
@@ -202,7 +202,7 @@ namespace TISpeech.ReviewMode.EscapeMenu.Codex
 
             var item = cachedContent[index];
             var sb = new StringBuilder();
-            sb.Append($"{index + 1} of {cachedContent.Count}: ");
+            sb.Append($"({index + 1} of {cachedContent.Count}) ");
 
             // Add title if present (first section of a topic)
             if (item.title != null && item.title.gameObject != null && item.title.gameObject.activeSelf)

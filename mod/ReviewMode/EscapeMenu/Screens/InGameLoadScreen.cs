@@ -293,7 +293,7 @@ namespace TISpeech.ReviewMode.EscapeMenu.Screens
 
                 if (controls.Count > 0)
                 {
-                    TISpeechMod.Speak($"1 of {controls.Count}: {controls[0].GetAnnouncement()}", interrupt: false);
+                    TISpeechMod.Speak($"{controls[0].GetAnnouncement()}, 1 of {controls.Count}", interrupt: false);
                 }
             }
         }

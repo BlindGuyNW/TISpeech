@@ -1178,7 +1178,7 @@ namespace TISpeech.ReviewMode
                 return "";
 
             var body = originBodies[CurrentIndex];
-            return $"{posStr} {FormatBodyName(body)}";
+            return $"{FormatBodyName(body)}, {posStr}";
         }
 
         private string GetOriginOrbitAnnouncement(string posStr)
@@ -1187,7 +1187,7 @@ namespace TISpeech.ReviewMode
                 return "";
 
             var orbit = originOrbits[CurrentIndex];
-            return $"{posStr} {orbitReader.ReadSummary(orbit)}";
+            return $"{orbitReader.ReadSummary(orbit)}, {posStr}";
         }
 
         private string GetDestinationTypeAnnouncement(string posStr)
@@ -1196,7 +1196,7 @@ namespace TISpeech.ReviewMode
                 return "";
 
             var option = destinationTypeOptions[CurrentIndex];
-            return $"{posStr} {option.Label}. {option.DetailText}";
+            return $"{option.Label}, {posStr}. {option.DetailText}";
         }
 
         private string GetBodyAnnouncement(string posStr)
@@ -1205,7 +1205,7 @@ namespace TISpeech.ReviewMode
                 return "";
 
             var body = bodies[CurrentIndex];
-            return $"{posStr} {FormatBodyName(body)}";
+            return $"{FormatBodyName(body)}, {posStr}";
         }
 
         private string FormatBodyName(TINaturalSpaceObjectState body)
@@ -1233,7 +1233,7 @@ namespace TISpeech.ReviewMode
                 return "";
 
             var orbit = orbits[CurrentIndex];
-            return $"{posStr} {orbitReader.ReadSummary(orbit)}";
+            return $"{orbitReader.ReadSummary(orbit)}, {posStr}";
         }
 
         private string GetHabAnnouncement(string posStr)
@@ -1243,7 +1243,7 @@ namespace TISpeech.ReviewMode
 
             var hab = habs[CurrentIndex];
             string location = hab.ref_spaceBody?.displayName ?? hab.ref_naturalSpaceObject?.displayName ?? "";
-            return $"{posStr} {hab.displayName} at {location}";
+            return $"{hab.displayName} at {location}, {posStr}";
         }
 
         private string GetEnemyFleetAnnouncement(string posStr)
@@ -1254,7 +1254,7 @@ namespace TISpeech.ReviewMode
             var fleet = enemyFleets[CurrentIndex];
             string faction = fleet.faction?.displayName ?? "Unknown";
             int ships = fleet.ships?.Count ?? 0;
-            return $"{posStr} {fleet.displayName} ({faction}), {ships} ship{(ships != 1 ? "s" : "")}";
+            return $"{fleet.displayName} ({faction}), {ships} ship{(ships != 1 ? "s" : "")}, {posStr}";
         }
 
         private string GetTrajectoryAnnouncement(string posStr)
@@ -1266,14 +1266,14 @@ namespace TISpeech.ReviewMode
                 ? theoreticalDeltaV_mps / 1000f
                 : Fleet.currentDeltaV_kps;
 
-            return $"{posStr} {trajectoryReader.ReadSummary(Trajectories[CurrentIndex], availableDV)}";
+            return $"{trajectoryReader.ReadSummary(Trajectories[CurrentIndex], availableDV)}, {posStr}";
         }
 
         private string GetConfirmOptionAnnouncement(string posStr)
         {
             return CurrentIndex == 0
-                ? $"{posStr} Yes - Assign this transfer"
-                : $"{posStr} No - Cancel";
+                ? $"Yes - Assign this transfer, {posStr}"
+                : $"No - Cancel, {posStr}";
         }
 
         private string GetConfirmationPrompt()

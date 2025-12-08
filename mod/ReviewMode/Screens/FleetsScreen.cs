@@ -259,6 +259,8 @@ namespace TISpeech.ReviewMode.Screens
             fleetReader.OnSelectHomeport = OnSelectHomeport;
             fleetReader.OnSelectMergeTarget = OnSelectMergeTarget;
             fleetReader.OnExecuteMaintenanceOperation = OnExecuteMaintenanceOperation;
+            fleetReader.OnSelectLandingSite = OnSelectLandingSite;
+            fleetReader.OnSelectLaunchOrbit = OnSelectLaunchOrbit;
 
             var fleet = items[index];
             cachedItemIndex = index;
@@ -291,6 +293,16 @@ namespace TISpeech.ReviewMode.Screens
         /// Callback for executing a maintenance operation (resupply, repair).
         /// </summary>
         public Action<TISpaceFleetState, Type> OnExecuteMaintenanceOperation { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a landing site for the fleet.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectLandingSite { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a launch orbit for the fleet.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectLaunchOrbit { get; set; }
 
         public override string GetItemSortName(int index)
         {

@@ -47,6 +47,16 @@ namespace TISpeech.ReviewMode.Readers
         /// </summary>
         public Action<TISpaceFleetState, Type> OnExecuteMaintenanceOperation { get; set; }
 
+        /// <summary>
+        /// Callback for selecting a landing site (hab site) for landing operation.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectLandingSite { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a launch orbit for launch from surface operation.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectLaunchOrbit { get; set; }
+
         public string ReadSummary(TISpaceFleetState fleet)
         {
             if (fleet == null)
@@ -651,6 +661,40 @@ namespace TISpeech.ReviewMode.Readers
                     }
                 }
 
+                // Launch From Surface - when fleet is landed
+                if (fleet.landed)
+                {
+                    var launchOp = GetFleetOperation<LaunchFromSurfaceOperation>();
+                    if (launchOp != null && launchOp.OpVisibleToActor(fleet))
+                    {
+                        var launchTargets = launchOp.GetPossibleTargets(fleet);
+                        bool canLaunch = launchOp.ActorCanPerformOperation(fleet, fleet) && launchTargets.Count > 0;
+                        string status = canLaunch
+                            ? $"{launchTargets.Count} orbit{(launchTargets.Count != 1 ? "s" : "")} available"
+                            : GetLaunchBlockedReason(fleet, launchOp);
+
+                        section.AddItem("Launch From Surface", status,
+                            onActivate: canLaunch ? () => OnSelectLaunchOrbit?.Invoke(fleetCopy) : null);
+                    }
+                }
+
+                // Land On Surface - when fleet is in orbit (not landed, not docked)
+                if (!fleet.landed && !fleet.dockedAtHab)
+                {
+                    var landOp = GetFleetOperation<LandOnSurfaceOperation>();
+                    if (landOp != null && landOp.OpVisibleToActor(fleet))
+                    {
+                        var landTargets = landOp.GetPossibleTargets(fleet);
+                        bool canLand = landTargets.Count > 0 && landOp.ActorCanPerformOperation(fleet, fleet);
+                        string status = canLand
+                            ? $"{landTargets.Count} site{(landTargets.Count != 1 ? "s" : "")} available"
+                            : GetLandBlockedReason(fleet, landOp);
+
+                        section.AddItem("Land On Surface", status,
+                            onActivate: canLand ? () => OnSelectLandingSite?.Invoke(fleetCopy) : null);
+                    }
+                }
+
                 // Merge Fleet - find other fleets we can merge with
                 var mergeOp = GetFleetOperation<MergeFleetOperation>();
                 if (mergeOp != null && mergeOp.OpVisibleToActor(fleet))
@@ -911,6 +955,63 @@ namespace TISpeech.ReviewMode.Readers
             if (!fleet.allShipsCanManeuver)
                 return "Some ships cannot maneuver";
             return "Cannot undock";
+        }
+
+        /// <summary>
+        /// Get the reason why a fleet cannot launch from surface.
+        /// </summary>
+        private string GetLaunchBlockedReason(TISpaceFleetState fleet, LaunchFromSurfaceOperation op)
+        {
+            if (!fleet.landed)
+                return "Not on surface";
+            if (fleet.inCombatOrWaitingForCombat)
+                return "In combat";
+
+            // Check if fleet has enough thrust to escape gravity
+            try
+            {
+                var habSite = fleet.dockedLocation?.ref_habSite;
+                if (habSite != null)
+                {
+                    double surfaceGravity = habSite.parentBody.surfaceGravity_g;
+                    if (fleet.maxAcceleration_gs < surfaceGravity)
+                        return $"Insufficient thrust ({fleet.maxAcceleration_gs:F2}g vs {surfaceGravity:F2}g gravity)";
+                }
+            }
+            catch { }
+
+            // Check delta-V
+            var targets = op.GetPossibleTargets(fleet);
+            if (targets.Count == 0)
+                return "Insufficient delta-V for any orbit";
+
+            return "Cannot launch";
+        }
+
+        /// <summary>
+        /// Get the reason why a fleet cannot land on surface.
+        /// </summary>
+        private string GetLandBlockedReason(TISpaceFleetState fleet, LandOnSurfaceOperation op)
+        {
+            if (fleet.landed)
+                return "Already on surface";
+            if (fleet.dockedAtHab)
+                return "Currently docked";
+            if (fleet.transferAssigned)
+                return "Transfer assigned";
+            if (fleet.inCombatOrWaitingForCombat)
+                return "In combat";
+
+            // Check if in interface orbit
+            if (fleet.orbitState == null || !fleet.orbitState.interfaceOrbit)
+                return "Not in interface orbit";
+
+            // Check available targets
+            var targets = op.GetPossibleTargets(fleet);
+            if (targets.Count == 0)
+                return "No landing sites available";
+
+            return "Cannot land";
         }
 
         /// <summary>

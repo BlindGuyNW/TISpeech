@@ -287,7 +287,7 @@ namespace TISpeech.ReviewMode
             if (option == null)
                 return "No target selected";
 
-            return $"{CurrentIndex + 1} of {Options.Count}: {option.Label}";
+            return $"{option.Label}, {CurrentIndex + 1} of {Options.Count}";
         }
 
         /// <summary>

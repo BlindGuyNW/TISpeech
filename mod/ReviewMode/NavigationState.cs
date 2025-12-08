@@ -397,7 +397,7 @@ namespace TISpeech.ReviewMode
                 case NavigationLevel.Screens:
                     if (CurrentScreen != null)
                     {
-                        return $"Screen {currentScreenIndex + 1} of {screens.Count}: {CurrentScreen.Name}";
+                        return $"{CurrentScreen.Name}, {currentScreenIndex + 1} of {screens.Count}";
                     }
                     return "No screens available";
 
@@ -405,14 +405,14 @@ namespace TISpeech.ReviewMode
                     if (CurrentScreen != null && CurrentScreen.ItemCount > 0)
                     {
                         string summary = CurrentScreen.ReadItemSummary(currentItemIndex);
-                        return $"{currentItemIndex + 1} of {CurrentScreen.ItemCount}: {summary}";
+                        return $"{summary}, {currentItemIndex + 1} of {CurrentScreen.ItemCount}";
                     }
                     return "No items";
 
                 case NavigationLevel.Sections:
                     if (CurrentSection != null && currentSections != null)
                     {
-                        return $"Section {currentSectionIndex + 1} of {currentSections.Count}: {CurrentSection.Name}, {CurrentSection.ItemCount} items";
+                        return $"{CurrentSection.Name}, {currentSectionIndex + 1} of {currentSections.Count}, {CurrentSection.ItemCount} items";
                     }
                     return "No sections";
 
@@ -422,7 +422,7 @@ namespace TISpeech.ReviewMode
                         string itemText = CurrentSection.ReadItem(currentSectionItemIndex);
                         bool canActivate = CurrentSection.CanActivate(currentSectionItemIndex);
                         string suffix = canActivate ? " (press Enter to activate)" : "";
-                        return $"{currentSectionItemIndex + 1} of {CurrentSection.ItemCount}: {itemText}{suffix}";
+                        return $"{itemText}, {currentSectionItemIndex + 1} of {CurrentSection.ItemCount}{suffix}";
                     }
                     return "No items in section";
             }

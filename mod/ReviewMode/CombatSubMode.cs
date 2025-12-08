@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using HarmonyLib;
 using MelonLoader;
 using PavonisInteractive.TerraInvicta;
 using PavonisInteractive.TerraInvicta.Actions;
@@ -133,9 +134,46 @@ namespace TISpeech.ReviewMode
         {
             try
             {
+                // Refresh both combat and player references
                 combat = TISpaceCombatState.CurrentActiveCombat;
+                player = GameControl.control?.activePlayer;
+
+                if (player == null)
+                {
+                    MelonLogger.Msg("CombatSubMode.Refresh: player is null");
+                    CurrentPhase = PreCombatPhase.None;
+                    Options.Clear();
+                    return;
+                }
+
+                // Check if post-combat results are showing (even if combat state is null)
+                if (IsPostCombatResultsVisible())
+                {
+                    if (CurrentPhase != PreCombatPhase.PostCombat)
+                    {
+                        MelonLogger.Msg("CombatSubMode: Detected post-combat results, switching to PostCombat phase");
+                        CurrentPhase = PreCombatPhase.PostCombat;
+                        BuildOptions();
+                        CurrentIndex = 0;
+                    }
+                    return;
+                }
+
+                // Check if pre-combat UI is still visible (even if combat state is null)
+                if (IsPreCombatUIVisible())
+                {
+                    // Pre-combat UI is visible, don't exit even if combat state is weird
+                    if (combat == null)
+                    {
+                        MelonLogger.Msg("CombatSubMode: combat is null but pre-combat UI is visible, staying in combat mode");
+                        // Keep current phase, don't change anything
+                        return;
+                    }
+                }
+
                 if (combat == null)
                 {
+                    MelonLogger.Msg("CombatSubMode: combat is null and no UI visible, exiting combat mode");
                     CurrentPhase = PreCombatPhase.None;
                     Options.Clear();
                     return;
@@ -147,6 +185,7 @@ namespace TISpeech.ReviewMode
                 // If phase changed, rebuild options
                 if (CurrentPhase != previousPhase)
                 {
+                    MelonLogger.Msg($"CombatSubMode: Phase changed from {previousPhase} to {CurrentPhase}");
                     BuildOptions();
                     CurrentIndex = 0;
                 }
@@ -157,10 +196,85 @@ namespace TISpeech.ReviewMode
             }
         }
 
+        /// <summary>
+        /// Check if the pre-combat UI is currently visible.
+        /// </summary>
+        private bool IsPreCombatUIVisible()
+        {
+            try
+            {
+                if (precombatController == null)
+                {
+                    // Try to get it again
+                    var canvasManager = World.Active?.GetExistingManager<CanvasManager>();
+                    if (canvasManager != null)
+                    {
+                        precombatController = canvasManager.PrecombatControllerCanvas as PrecombatController;
+                    }
+                }
+
+                if (precombatController == null)
+                    return false;
+
+                // Check if the controller is visible
+                if (!precombatController.Visible())
+                    return false;
+
+                // Use reflection to check preCombatUIObject.activeSelf
+                var preCombatUIField = AccessTools.Field(typeof(PrecombatController), "preCombatUIObject");
+                if (preCombatUIField == null)
+                    return false;
+
+                var preCombatUI = preCombatUIField.GetValue(precombatController) as GameObject;
+                return preCombatUI != null && preCombatUI.activeSelf;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error checking pre-combat visibility: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Check if the post-combat results UI is currently visible.
+        /// </summary>
+        private bool IsPostCombatResultsVisible()
+        {
+            try
+            {
+                if (precombatController == null)
+                {
+                    // Try to get it again
+                    var canvasManager = World.Active?.GetExistingManager<CanvasManager>();
+                    if (canvasManager != null)
+                    {
+                        precombatController = canvasManager.PrecombatControllerCanvas as PrecombatController;
+                    }
+                }
+
+                if (precombatController == null)
+                    return false;
+
+                // Use reflection to check postCombatUIObject.activeSelf
+                var postCombatUIField = AccessTools.Field(typeof(PrecombatController), "postCombatUIObject");
+                if (postCombatUIField == null)
+                    return false;
+
+                var postCombatUI = postCombatUIField.GetValue(precombatController) as GameObject;
+                return postCombatUI != null && postCombatUI.activeSelf;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error checking post-combat visibility: {ex.Message}");
+                return false;
+            }
+        }
+
         private void DetermineCurrentPhase()
         {
             if (combat == null)
             {
+                MelonLogger.Msg("DetermineCurrentPhase: combat is null");
                 CurrentPhase = PreCombatPhase.None;
                 return;
             }
@@ -200,9 +314,12 @@ namespace TISpeech.ReviewMode
             // Check if combat will occur (resolution phase)
             if (combat.HaveStancesBeenSelected && (!combat.requiresBidding || combat.HaveBidsBeenSubmitted))
             {
-                // Check if combat is active (live combat started)
-                if (combat.active)
+                // Check if we're actually in the 3D tactical combat view
+                // (combat.active becomes true before the resolution UI appears, so we can't trust it)
+                var viewMgr = GameControl.control?.viewMgr;
+                if (viewMgr != null && viewMgr.currentView == ViewType.SpaceCombat)
                 {
+                    MelonLogger.Msg("DetermineCurrentPhase: In SpaceCombat view, exiting pre-combat mode");
                     CurrentPhase = PreCombatPhase.None; // Live combat mode, not pre-combat
                     return;
                 }
@@ -212,12 +329,15 @@ namespace TISpeech.ReviewMode
                 return;
             }
 
+            // Shouldn't reach here in normal flow
+            MelonLogger.Msg($"DetermineCurrentPhase: No phase matched! HaveStancesBeenSelected={combat.HaveStancesBeenSelected}, requiresBidding={combat.requiresBidding}, HaveBidsBeenSubmitted={combat.HaveBidsBeenSubmitted}, active={combat.active}");
             CurrentPhase = PreCombatPhase.None;
         }
 
         private void BuildOptions()
         {
             Options.Clear();
+            MelonLogger.Msg($"BuildOptions: Phase={CurrentPhase}, combat={(combat != null ? "valid" : "NULL")}");
 
             switch (CurrentPhase)
             {
@@ -230,15 +350,36 @@ namespace TISpeech.ReviewMode
                 case PreCombatPhase.Resolution:
                     BuildResolutionOptions();
                     break;
+                case PreCombatPhase.PostCombat:
+                    BuildPostCombatOptions();
+                    break;
             }
+
+            MelonLogger.Msg($"BuildOptions: Added {Options.Count} options");
         }
 
         private void BuildStanceOptions()
         {
+            // Safety checks
+            if (combat == null || player == null)
+            {
+                MelonLogger.Msg("BuildStanceOptions: combat or player is null");
+                return;
+            }
+
+            if (combat.allowedStances == null || !combat.allowedStances.ContainsKey(player))
+            {
+                MelonLogger.Msg("BuildStanceOptions: allowedStances missing for player");
+                return;
+            }
+
             var allowedStances = combat.allowedStances[player];
 
             // Check if we've already submitted
-            bool alreadySubmitted = combat.stances.TryGetValue(player, out var currentStance) && currentStance != CombatStance.NotYetSet;
+            CombatStance currentStance = CombatStance.NotYetSet;
+            bool alreadySubmitted = combat.stances != null &&
+                combat.stances.TryGetValue(player, out currentStance) &&
+                currentStance != CombatStance.NotYetSet;
 
             if (alreadySubmitted)
             {
@@ -303,8 +444,15 @@ namespace TISpeech.ReviewMode
 
         private void BuildBiddingOptions()
         {
+            // Safety checks
+            if (combat == null || player == null)
+            {
+                MelonLogger.Msg("BuildBiddingOptions: combat or player is null");
+                return;
+            }
+
             // Check if we've already submitted bid
-            if (combat.bids_kps.ContainsKey(player))
+            if (combat.bids_kps != null && combat.bids_kps.ContainsKey(player))
             {
                 float ourBid = combat.bids_kps[player];
                 Options.Add(new CombatOption
@@ -322,7 +470,12 @@ namespace TISpeech.ReviewMode
             var theirFleet = combat.FleetAgainst(player);
             maxBid = combat.MaxDVBidForPursuit_mps(ourFleet, theirFleet) / 1000f;
 
-            bool isEvading = combat.stances[player] == CombatStance.Evade;
+            // Safely get our stance
+            bool isEvading = false;
+            if (combat.stances != null && combat.stances.TryGetValue(player, out var stance))
+            {
+                isEvading = stance == CombatStance.Evade;
+            }
             string roleText = isEvading ? "fleeing" : "pursuing";
 
             // Current bid display/adjust option
@@ -365,8 +518,16 @@ namespace TISpeech.ReviewMode
 
         private void BuildResolutionOptions()
         {
-            // Check if combat will occur
-            bool combatOccurs = DoesCombatOccur();
+            // Safety checks
+            if (combat == null || player == null)
+            {
+                MelonLogger.Msg("BuildResolutionOptions: combat or player is null");
+                return;
+            }
+
+            // Check if combat will actually occur
+            bool combatOccurs = combat.combatOccurs;
+            MelonLogger.Msg($"BuildResolutionOptions: combatOccurs={combatOccurs}");
 
             // Check if we're in skirmish mode (auto-resolve not available)
             bool isSkirmishMode = GameControl.control?.skirmishMode ?? false;
@@ -395,35 +556,63 @@ namespace TISpeech.ReviewMode
             }
             else
             {
-                // No combat - either fleet fled successfully or combat was avoided
-                string resultText = GetNoCombatResultText();
+                // No combat - fleet escaped or combat was avoided
                 Options.Add(new CombatOption
                 {
                     Label = "Close",
-                    Description = resultText,
+                    Description = "No combat occurred.",
                     IsAvailable = true,
                     OnActivate = ClosePreCombat
                 });
             }
         }
 
+        private void BuildPostCombatOptions()
+        {
+            Options.Add(new CombatOption
+            {
+                Label = "Close Results",
+                Description = "Close the combat results screen and continue.",
+                IsAvailable = true,
+                OnActivate = ClosePostCombatResults
+            });
+        }
+
         private bool DoesCombatOccur()
         {
-            // Combat doesn't occur if one side evades and the pursuer doesn't catch them
-            if (combat.fleeingFleet != null && combat.chasingFleet != null)
+            try
             {
-                // Check if chase is successful based on bids
-                float chaserBid = combat.bids_kps.ContainsKey(combat.chasingFleet.faction)
-                    ? combat.bids_kps[combat.chasingFleet.faction] : 0;
-                float fleeBid = combat.bids_kps.ContainsKey(combat.fleeingFleet.faction)
-                    ? combat.bids_kps[combat.fleeingFleet.faction] : 0;
+                if (combat == null)
+                    return true; // Assume combat occurs if we can't check
 
-                // If fleeing fleet bid more than chaser, they escape
-                // (Simplified check - actual logic is more complex)
-                if (fleeBid > chaserBid)
-                    return false;
+                // Combat doesn't occur if one side evades and the pursuer doesn't catch them
+                if (combat.fleeingFleet != null && combat.chasingFleet != null)
+                {
+                    var chaserFaction = combat.chasingFleet.faction;
+                    var fleeFaction = combat.fleeingFleet.faction;
+
+                    // Check for null factions
+                    if (chaserFaction == null || fleeFaction == null)
+                        return true;
+
+                    // Check if chase is successful based on bids
+                    float chaserBid = (combat.bids_kps != null && combat.bids_kps.ContainsKey(chaserFaction))
+                        ? combat.bids_kps[chaserFaction] : 0;
+                    float fleeBid = (combat.bids_kps != null && combat.bids_kps.ContainsKey(fleeFaction))
+                        ? combat.bids_kps[fleeFaction] : 0;
+
+                    // If fleeing fleet bid more than chaser, they escape
+                    // (Simplified check - actual logic is more complex)
+                    if (fleeBid > chaserBid)
+                        return false;
+                }
+                return true;
             }
-            return true;
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"DoesCombatOccur error: {ex.Message}");
+                return true; // Assume combat occurs on error
+            }
         }
 
         private string GetNoCombatResultText()
@@ -563,6 +752,28 @@ namespace TISpeech.ReviewMode
             }
         }
 
+        private void ClosePostCombatResults()
+        {
+            try
+            {
+                MelonLogger.Msg("Closing post-combat results");
+                if (precombatController != null)
+                {
+                    precombatController.OnClosePostCombatButtonSelected();
+                    TISpeechMod.Speak("Combat results closed", interrupt: true);
+                }
+                else
+                {
+                    TISpeechMod.Speak("Cannot close - controller not available", interrupt: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error closing post-combat results: {ex.Message}");
+                TISpeechMod.Speak("Error closing results", interrupt: true);
+            }
+        }
+
         #endregion
 
         #region Navigation
@@ -674,7 +885,7 @@ namespace TISpeech.ReviewMode
                 case PreCombatPhase.StanceSelection:
                     return $"Select your stance. {Options.Count} options available.";
                 case PreCombatPhase.Bidding:
-                    bool isEvading = combat.stances[player] == CombatStance.Evade;
+                    bool isEvading = combat != null && combat.stances.TryGetValue(player, out var stance) && stance == CombatStance.Evade;
                     return isEvading
                         ? "Bidding phase. Set delta-V for escape attempt."
                         : "Bidding phase. Set delta-V for pursuit.";
@@ -683,6 +894,8 @@ namespace TISpeech.ReviewMode
                     if (isSkirmish)
                         return "Skirmish mode. Manual combat only.";
                     return "Select battle resolution.";
+                case PreCombatPhase.PostCombat:
+                    return "Combat complete. Press Enter to close results.";
                 default:
                     return "";
             }
@@ -697,7 +910,7 @@ namespace TISpeech.ReviewMode
             if (option == null)
                 return "No option selected";
 
-            return $"{CurrentIndex + 1} of {Options.Count}: {option.Label}";
+            return $"{option.Label}, {CurrentIndex + 1} of {Options.Count}";
         }
 
         public string GetCurrentDetail()

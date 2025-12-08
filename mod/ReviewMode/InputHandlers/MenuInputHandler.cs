@@ -164,7 +164,7 @@ namespace TISpeech.ReviewMode.InputHandlers
             }
 
             string controlText = screen.ReadControl(controlIndex);
-            TISpeechMod.Speak($"{controlIndex + 1} of {controlCount}: {controlText}", interrupt: true);
+            TISpeechMod.Speak($"{controlText}, {controlIndex + 1} of {controlCount}", interrupt: true);
         }
 
         private char? GetPressedLetter()

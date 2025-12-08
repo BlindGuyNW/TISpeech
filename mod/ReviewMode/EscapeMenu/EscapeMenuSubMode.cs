@@ -127,7 +127,7 @@ namespace TISpeech.ReviewMode.EscapeMenu
                     if (screen.ControlCount > 0)
                     {
                         string firstControl = screen.ReadControl(0);
-                        TISpeechMod.Speak($"1 of {screen.ControlCount}: {firstControl}", interrupt: false);
+                        TISpeechMod.Speak($"{firstControl}, 1 of {screen.ControlCount}", interrupt: false);
                     }
                 }
 
@@ -284,7 +284,7 @@ namespace TISpeech.ReviewMode.EscapeMenu
                     if (newScreen.ControlCount > 0)
                     {
                         string firstControl = newScreen.ReadControl(0);
-                        TISpeechMod.Speak($"1 of {newScreen.ControlCount}: {firstControl}", interrupt: false);
+                        TISpeechMod.Speak($"{firstControl}, 1 of {newScreen.ControlCount}", interrupt: false);
                     }
                 }
 
@@ -588,7 +588,7 @@ namespace TISpeech.ReviewMode.EscapeMenu
                 currentControlIndex = count - 1;
 
             string controlText = screen.ReadControl(currentControlIndex);
-            TISpeechMod.Speak($"{currentControlIndex + 1} of {count}: {controlText}", interrupt: true);
+            TISpeechMod.Speak($"{controlText}, {currentControlIndex + 1} of {count}", interrupt: true);
         }
     }
 }

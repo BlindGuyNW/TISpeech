@@ -331,7 +331,7 @@ namespace TISpeech.ReviewMode
                     if (screen.ControlCount > 0)
                     {
                         string firstControl = screen.ReadControl(0);
-                        TISpeechMod.Speak($"1 of {screen.ControlCount}: {firstControl}", interrupt: false);
+                        TISpeechMod.Speak($"{firstControl}, 1 of {screen.ControlCount}", interrupt: false);
                     }
 
                     MelonLogger.Msg($"Switched to menu screen: {screenName}");
@@ -616,7 +616,7 @@ namespace TISpeech.ReviewMode
                 if (screen.ControlCount > 0)
                 {
                     string firstControl = screen.ReadControl(0);
-                    TISpeechMod.Speak($"1 of {screen.ControlCount}: {firstControl}", interrupt: false);
+                    TISpeechMod.Speak($"{firstControl}, 1 of {screen.ControlCount}", interrupt: false);
                 }
             }
             else
@@ -834,7 +834,7 @@ namespace TISpeech.ReviewMode
 
             selectionMode = new SelectionSubMode(prompt, options, onSelect);
             var firstOption = selectionMode.CurrentOption;
-            string announcement = $"{prompt}. {options.Count} options. 1 of {options.Count}: {firstOption.Label}. Use arrows to browse, Enter to select, minus for detail, Escape to cancel.";
+            string announcement = $"{prompt}. {options.Count} options. {firstOption.Label}, 1 of {options.Count}. Use arrows to browse, Enter to select, minus for detail, Escape to cancel.";
             TISpeechMod.Speak(announcement, interrupt: true);
         }
 
@@ -897,7 +897,7 @@ namespace TISpeech.ReviewMode
         {
             if (selectionMode == null) return;
             var option = selectionMode.CurrentOption;
-            TISpeechMod.Speak($"{selectionMode.CurrentIndex + 1} of {selectionMode.Count}: {option.Label}", interrupt: true);
+            TISpeechMod.Speak($"{option.Label}, {selectionMode.CurrentIndex + 1} of {selectionMode.Count}", interrupt: true);
         }
 
         private void AnnounceSelectionDetail()
