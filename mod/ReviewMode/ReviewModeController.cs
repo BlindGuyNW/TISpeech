@@ -70,6 +70,7 @@ namespace TISpeech.ReviewMode
         private ShipDesignerSubMode shipDesignerMode = null;
         private DiplomacyGreetingMode greetingMode = null;
         private EscapeMenuSubMode escapeMenuMode = null;
+        private OrgTargetSubMode orgTargetMode = null;
 
         public bool IsInNotificationMode => notificationMode != null;
         public bool IsInPolicyMode => policyMode != null;
@@ -81,6 +82,7 @@ namespace TISpeech.ReviewMode
         public bool IsInShipDesignerMode => shipDesignerMode != null;
         public bool IsInGreetingMode => greetingMode != null;
         public bool IsInEscapeMenuMode => escapeMenuMode != null;
+        public bool IsInOrgTargetMode => orgTargetMode != null;
 
         #endregion
 
@@ -156,6 +158,7 @@ namespace TISpeech.ReviewMode
             // Create in-game screens
             councilScreen = new CouncilScreen();
             councilScreen.OnEnterSelectionMode = EnterSelectionMode;
+            councilScreen.OnEnterOrgTargetMode = EnterOrgTargetMode;
             councilScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
             technologyScreen = new TechnologyScreen();
@@ -450,6 +453,9 @@ namespace TISpeech.ReviewMode
 
             if (selectionMode != null)
                 return HandleSelectionModeInput();
+
+            if (orgTargetMode != null)
+                return HandleOrgTargetModeInput();
 
             if (gridMode != null)
                 return HandleGridModeInput();
@@ -931,6 +937,120 @@ namespace TISpeech.ReviewMode
         {
             selectionMode = null;
             TISpeechMod.Speak("Cancelled", interrupt: true);
+        }
+
+        #endregion
+
+        #region Org Target Sub-Mode
+
+        public void EnterOrgTargetMode(TICouncilorState councilor, TIMissionTemplate mission, IList<TIGameState> targets)
+        {
+            if (targets.Count == 0)
+            {
+                TISpeechMod.Speak("No org targets available", interrupt: true);
+                return;
+            }
+
+            orgTargetMode = new OrgTargetSubMode(councilor, mission, targets);
+            orgTargetMode.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            orgTargetMode.OnTargetSelected = () =>
+            {
+                orgTargetMode = null;
+                // Return to council screen after assignment
+            };
+
+            string announcement = orgTargetMode.GetEntryAnnouncement();
+            TISpeechMod.Speak(announcement, interrupt: true);
+        }
+
+        private bool HandleOrgTargetModeInput()
+        {
+            // Navigation: Previous/Next
+            if (Input.GetKeyDown(KeyCode.Keypad8) || Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                orgTargetMode.Previous();
+                TISpeechMod.Speak(orgTargetMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                orgTargetMode.Next();
+                TISpeechMod.Speak(orgTargetMode.GetCurrentAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Drill down / Activate
+            if (Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Keypad5) ||
+                Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                if (orgTargetMode.DrillDown())
+                {
+                    TISpeechMod.Speak(orgTargetMode.GetCurrentAnnouncement(), interrupt: true);
+                }
+                return true;
+            }
+
+            // Back out / Cancel
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.Backspace))
+            {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    BlockGameEscapeProcessing();
+
+                if (!orgTargetMode.BackOut())
+                {
+                    // At top level - cancel entirely
+                    orgTargetMode = null;
+                    TISpeechMod.Speak("Target selection cancelled", interrupt: true);
+                }
+                else
+                {
+                    TISpeechMod.Speak(orgTargetMode.GetCurrentAnnouncement(), interrupt: true);
+                }
+                return true;
+            }
+
+            // Assign target with plus/backslash (confirm key)
+            if (Input.GetKeyDown(KeyCode.KeypadPlus) || Input.GetKeyDown(KeyCode.Backslash))
+            {
+                orgTargetMode.AssignCurrentTarget();
+                return true;
+            }
+
+            // Detail (numpad *)
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply) || Input.GetKeyDown(KeyCode.Minus))
+            {
+                TISpeechMod.Speak(orgTargetMode.GetDetailAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // List all (numpad /)
+            if (Input.GetKeyDown(KeyCode.KeypadDivide) || Input.GetKeyDown(KeyCode.Equals))
+            {
+                TISpeechMod.Speak(orgTargetMode.GetListAnnouncement(), interrupt: true);
+                return true;
+            }
+
+            // Letter navigation (only at org list level)
+            if (orgTargetMode.CurrentLevel == OrgTargetLevel.OrgList)
+            {
+                char? letter = GetPressedLetter();
+                if (letter.HasValue)
+                {
+                    int newIndex = orgTargetMode.FindNextOrgByLetter(letter.Value);
+                    if (newIndex >= 0)
+                    {
+                        orgTargetMode.SetOrgIndex(newIndex);
+                        TISpeechMod.Speak(orgTargetMode.GetCurrentAnnouncement(), interrupt: true);
+                    }
+                    else
+                    {
+                        TISpeechMod.Speak($"No organizations starting with {letter.Value}", interrupt: true);
+                    }
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         #endregion

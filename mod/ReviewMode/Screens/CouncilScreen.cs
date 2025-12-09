@@ -86,6 +86,12 @@ namespace TISpeech.ReviewMode.Screens
         public Action<string, List<SelectionOption>, Action<int>> OnEnterSelectionMode { get; set; }
 
         /// <summary>
+        /// Callback for entering org target mode (for Hostile Takeover and similar missions).
+        /// Parameters: councilor, mission, list of org targets.
+        /// </summary>
+        public Action<TICouncilorState, TIMissionTemplate, IList<TIGameState>> OnEnterOrgTargetMode { get; set; }
+
+        /// <summary>
         /// Callback for speaking announcements.
         /// </summary>
         public Action<string, bool> OnSpeak { get; set; }
@@ -524,6 +530,15 @@ namespace TISpeech.ReviewMode.Screens
             if (targets == null || targets.Count == 0)
             {
                 OnSpeak?.Invoke($"No valid targets for {mission.displayName}", true);
+                return;
+            }
+
+            // Check if all targets are orgs - use OrgTargetMode for better browsing
+            bool allOrgs = targets.All(t => t.isOrgState);
+            if (allOrgs && OnEnterOrgTargetMode != null)
+            {
+                MelonLogger.Msg($"All {targets.Count} targets are orgs, entering OrgTargetMode");
+                OnEnterOrgTargetMode.Invoke(councilor, mission, targets);
                 return;
             }
 

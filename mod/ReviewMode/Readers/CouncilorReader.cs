@@ -624,31 +624,33 @@ namespace TISpeech.ReviewMode.Readers
 
         private string GetOrgDetailText(TIOrgState org)
         {
-            var sb = new StringBuilder();
-            sb.AppendLine($"Organization: {org.displayName}");
-            sb.AppendLine($"Tier: {org.tier}");
+            if (org == null)
+                return "Unknown organization";
 
-            if (org.template != null)
+            try
             {
-                sb.AppendLine($"Type: {org.template.orgType}");
+                // Use the game's built-in description method which includes:
+                // - Name, tier, home region
+                // - Required/prohibited traits
+                // - Why you can't use it (ideology, nation requirements, etc.)
+                // - Missions granted
+                // - All income bonuses (money, influence, ops, boost, research, mission control, projects)
+                // - All stat bonuses (persuasion, investigation, espionage, command, admin, science, security)
+                // - All priority bonuses (12 types including economy, welfare, military, etc.)
+                // - Tech category bonuses
+                // - Mining bonus
+                // - Innate defenses
+                // - Sale price if owned
+                var faction = GameControl.control?.activePlayer;
+                string description = org.description(includeDisplayName: true, faction, includeOwnership: true);
+                return TISpeechMod.CleanText(description);
             }
-
-            // Key bonuses
-            if (org.incomeMoney_month != 0) sb.AppendLine($"Money/month: {org.incomeMoney_month:+#;-#;0}");
-            if (org.incomeInfluence_month != 0) sb.AppendLine($"Influence/month: {org.incomeInfluence_month:+#;-#;0}");
-            if (org.incomeOps_month != 0) sb.AppendLine($"Operations/month: {org.incomeOps_month:+#;-#;0}");
-            if (org.incomeResearch_month != 0) sb.AppendLine($"Research/month: {org.incomeResearch_month:+#;-#;0}");
-
-            // Stat bonuses
-            if (org.persuasion != 0) sb.AppendLine($"Persuasion: {org.persuasion:+#;-#;0}");
-            if (org.command != 0) sb.AppendLine($"Command: {org.command:+#;-#;0}");
-            if (org.investigation != 0) sb.AppendLine($"Investigation: {org.investigation:+#;-#;0}");
-            if (org.espionage != 0) sb.AppendLine($"Espionage: {org.espionage:+#;-#;0}");
-            if (org.administration != 0) sb.AppendLine($"Administration: {org.administration:+#;-#;0}");
-            if (org.science != 0) sb.AppendLine($"Science: {org.science:+#;-#;0}");
-            if (org.security != 0) sb.AppendLine($"Security: {org.security:+#;-#;0}");
-
-            return sb.ToString();
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error getting org description: {ex.Message}");
+                // Fallback to basic info
+                return $"{org.displayName}, Tier {org.tier}";
+            }
         }
 
         private DataSection BuildSpendXPSection(TICouncilorState councilor)
