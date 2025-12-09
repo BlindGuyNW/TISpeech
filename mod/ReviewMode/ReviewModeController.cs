@@ -46,6 +46,7 @@ namespace TISpeech.ReviewMode
         private FleetsScreen fleetsScreen;
         private SpaceBodiesScreen spaceBodiesScreen;
         private HabsScreen habsScreen;
+        private ShipyardsScreen shipyardsScreen;
         private ShipClassesScreen shipClassesScreen;
         private FactionIntelScreen factionIntelScreen;
         private AlienThreatScreen alienThreatScreen;
@@ -195,6 +196,16 @@ namespace TISpeech.ReviewMode
             habsScreen.OnEnterSelectionMode = EnterSelectionMode;
             habsScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
 
+            shipyardsScreen = new ShipyardsScreen();
+            shipyardsScreen.OnEnterSelectionMode = EnterSelectionMode;
+            shipyardsScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            shipyardsScreen.OnCancelBuild = HandleCancelBuild;
+            shipyardsScreen.OnMoveInQueue = HandleMoveInQueue;
+            shipyardsScreen.OnClearQueue = HandleClearQueue;
+            shipyardsScreen.OnTogglePayFromEarth = HandleTogglePayFromEarth;
+            shipyardsScreen.OnExecuteMaintenanceOperation = (fleet, opType) => fleetOpsHandler?.ExecuteMaintenanceOperation(fleet, opType);
+            shipyardsScreen.OnAddToQueue = HandleAddToQueue;
+
             shipClassesScreen = new ShipClassesScreen();
             shipClassesScreen.OnEnterSelectionMode = EnterSelectionMode;
             shipClassesScreen.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
@@ -230,6 +241,7 @@ namespace TISpeech.ReviewMode
                 fleetsScreen,
                 spaceBodiesScreen,
                 habsScreen,
+                shipyardsScreen,
                 shipClassesScreen,
                 factionIntelScreen,
                 alienThreatScreen,
@@ -2858,6 +2870,330 @@ namespace TISpeech.ReviewMode
             {
                 MelonLogger.Error($"Error confirming assignments: {ex.Message}");
                 TISpeechMod.Speak("Error confirming assignments", interrupt: true);
+            }
+        }
+
+        #endregion
+
+        #region Shipyard Queue Actions
+
+        private void HandleCancelBuild(TIHabModuleState shipyard, ShipConstructionQueueItem item)
+        {
+            if (shipyard == null || item == null)
+            {
+                TISpeechMod.Speak("Invalid selection", interrupt: true);
+                return;
+            }
+
+            try
+            {
+                var faction = shipyard.sector?.faction;
+                if (faction == null)
+                {
+                    TISpeechMod.Speak("Error: No faction found", interrupt: true);
+                    return;
+                }
+
+                string shipClass = item.shipDesign?.fullClassName ?? "Unknown";
+
+                // Build confirmation message
+                string details;
+                if (item.costPaid)
+                {
+                    int progress = (int)(item.progressFraction * 100);
+                    details = $"{progress}% complete. You will receive a partial refund.";
+                }
+                else
+                {
+                    details = "Not yet started. Full refund.";
+                }
+
+                // Request confirmation before cancelling
+                ConfirmationHelper.RequestConfirmation(
+                    $"Cancel {shipClass}",
+                    details,
+                    EnterSelectionMode,
+                    onConfirm: () => ExecuteCancelBuild(shipyard, item, shipClass),
+                    onCancel: () => TISpeechMod.Speak("Cancelled", interrupt: true)
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error cancelling build: {ex.Message}");
+                TISpeechMod.Speak("Error cancelling build", interrupt: true);
+            }
+        }
+
+        private void ExecuteCancelBuild(TIHabModuleState shipyard, ShipConstructionQueueItem item, string shipClass)
+        {
+            try
+            {
+                var faction = shipyard.sector?.faction;
+                if (faction == null)
+                {
+                    TISpeechMod.Speak("Error: No faction found", interrupt: true);
+                    return;
+                }
+
+                // Execute the action
+                var action = new RemoveShipFromShipyardQueueAction(shipyard, item);
+                faction.playerControl.StartAction(action);
+
+                if (item.costPaid)
+                {
+                    TISpeechMod.Speak($"Cancelled {shipClass}. Partial refund received.", interrupt: true);
+                }
+                else
+                {
+                    TISpeechMod.Speak($"Cancelled {shipClass}. Full refund.", interrupt: true);
+                }
+                MelonLogger.Msg($"Cancelled build: {shipClass} at {shipyard.hab?.displayName}");
+
+                // Invalidate cache and refresh navigation
+                shipyardsScreen.InvalidateSectionCache();
+                navigation.RefreshSections();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing cancel build: {ex.Message}");
+                TISpeechMod.Speak("Error cancelling build", interrupt: true);
+            }
+        }
+
+        private void HandleMoveInQueue(TIHabModuleState shipyard, ShipConstructionQueueItem item, int newIndex)
+        {
+            if (shipyard == null || item == null)
+            {
+                TISpeechMod.Speak("Invalid selection", interrupt: true);
+                return;
+            }
+
+            try
+            {
+                var faction = shipyard.sector?.faction;
+                if (faction == null)
+                {
+                    TISpeechMod.Speak("Error: No faction found", interrupt: true);
+                    return;
+                }
+
+                var queue = faction.GetShipyardQueue(shipyard);
+                int currentIndex = queue.IndexOf(item);
+
+                // Validate move
+                if (newIndex < 0 || newIndex >= queue.Count)
+                {
+                    TISpeechMod.Speak("Cannot move to that position", interrupt: true);
+                    return;
+                }
+
+                // Cannot move past a ship that has started building
+                if (newIndex == 0 && queue.Count > 0 && queue[0].costPaid)
+                {
+                    TISpeechMod.Speak("Cannot move ahead of ship under construction", interrupt: true);
+                    return;
+                }
+
+                string shipClass = item.shipDesign?.fullClassName ?? "Unknown";
+
+                // Execute the action
+                var action = new RepositionShipinConstructionQueueAction(shipyard, item, newIndex);
+                faction.playerControl.StartAction(action);
+
+                string direction = newIndex < currentIndex ? "up" : "down";
+                TISpeechMod.Speak($"Moved {shipClass} {direction} in queue to position {newIndex}", interrupt: true);
+                MelonLogger.Msg($"Moved {shipClass} to position {newIndex} at {shipyard.hab?.displayName}");
+
+                // Invalidate cache and refresh navigation
+                shipyardsScreen.InvalidateSectionCache();
+                navigation.RefreshSections();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error moving in queue: {ex.Message}");
+                TISpeechMod.Speak("Error moving in queue", interrupt: true);
+            }
+        }
+
+        private void HandleClearQueue(TIHabModuleState shipyard)
+        {
+            if (shipyard == null)
+            {
+                TISpeechMod.Speak("Invalid shipyard", interrupt: true);
+                return;
+            }
+
+            try
+            {
+                var faction = shipyard.sector?.faction;
+                if (faction == null)
+                {
+                    TISpeechMod.Speak("Error: No faction found", interrupt: true);
+                    return;
+                }
+
+                var queue = faction.GetShipyardQueue(shipyard);
+                if (queue == null || queue.Count == 0)
+                {
+                    TISpeechMod.Speak("Queue is already empty", interrupt: true);
+                    return;
+                }
+
+                // Count how many we can remove (skip first if cost paid)
+                int startIndex = queue[0].costPaid ? 1 : 0;
+                int removeCount = queue.Count - startIndex;
+
+                if (removeCount == 0)
+                {
+                    TISpeechMod.Speak("No ships to remove from queue - only active construction", interrupt: true);
+                    return;
+                }
+
+                // Build confirmation message
+                string details = $"{removeCount} ship{(removeCount != 1 ? "s" : "")} will be removed.";
+                if (startIndex == 1)
+                {
+                    details += " Current build will continue.";
+                }
+
+                // Request confirmation
+                ConfirmationHelper.RequestConfirmation(
+                    "Clear build queue",
+                    details,
+                    EnterSelectionMode,
+                    onConfirm: () => ExecuteClearQueue(shipyard, startIndex),
+                    onCancel: () => TISpeechMod.Speak("Cancelled", interrupt: true)
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error clearing queue: {ex.Message}");
+                TISpeechMod.Speak("Error clearing queue", interrupt: true);
+            }
+        }
+
+        private void ExecuteClearQueue(TIHabModuleState shipyard, int startIndex)
+        {
+            try
+            {
+                var faction = shipyard.sector?.faction;
+                if (faction == null)
+                {
+                    TISpeechMod.Speak("Error: No faction found", interrupt: true);
+                    return;
+                }
+
+                var queue = faction.GetShipyardQueue(shipyard);
+                int removeCount = queue.Count - startIndex;
+
+                // Remove items from end to start to avoid index shifting
+                for (int i = queue.Count - 1; i >= startIndex; i--)
+                {
+                    var action = new RemoveShipFromShipyardQueueAction(shipyard, queue[i]);
+                    faction.playerControl.StartAction(action);
+                }
+
+                TISpeechMod.Speak($"Cleared {removeCount} ship{(removeCount != 1 ? "s" : "")} from queue", interrupt: true);
+                MelonLogger.Msg($"Cleared {removeCount} ships from queue at {shipyard.hab?.displayName}");
+
+                // Invalidate cache and refresh navigation
+                shipyardsScreen.InvalidateSectionCache();
+                navigation.RefreshSections();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing clear queue: {ex.Message}");
+                TISpeechMod.Speak("Error clearing queue", interrupt: true);
+            }
+        }
+
+        private void HandleTogglePayFromEarth(TIHabModuleState shipyard, bool newValue)
+        {
+            if (shipyard == null)
+            {
+                TISpeechMod.Speak("Invalid shipyard", interrupt: true);
+                return;
+            }
+
+            try
+            {
+                var faction = shipyard.sector?.faction;
+                if (faction == null)
+                {
+                    TISpeechMod.Speak("Error: No faction found", interrupt: true);
+                    return;
+                }
+
+                // Execute the action
+                var action = new UpdatePayMethodForConstructionQueueAction(shipyard, newValue);
+                faction.playerControl.StartAction(action);
+
+                string status = newValue ? "enabled" : "disabled";
+                TISpeechMod.Speak($"Pay from Earth {status}", interrupt: true);
+                MelonLogger.Msg($"Pay from Earth {status} at {shipyard.hab?.displayName}");
+
+                // Invalidate cache and refresh navigation
+                shipyardsScreen.InvalidateSectionCache();
+                navigation.RefreshSections();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error toggling pay from Earth: {ex.Message}");
+                TISpeechMod.Speak("Error changing setting", interrupt: true);
+            }
+        }
+
+        private void HandleAddToQueue(TIHabModuleState shipyard, TISpaceShipTemplate design, bool allowPayFromEarth)
+        {
+            if (shipyard == null || design == null)
+            {
+                TISpeechMod.Speak("Invalid selection", interrupt: true);
+                return;
+            }
+
+            try
+            {
+                var faction = shipyard.sector?.faction;
+                if (faction == null)
+                {
+                    TISpeechMod.Speak("Error: No faction found", interrupt: true);
+                    return;
+                }
+
+                string className = design.fullClassName ?? design.className ?? "Unknown";
+
+                // Check affordability
+                var cost = design.spaceResourceConstructionCost(forceUpdateToCache: false, shipyard: shipyard);
+                if (!cost.CanAfford(faction))
+                {
+                    TISpeechMod.Speak($"Cannot afford {className}. Check resources.", interrupt: true);
+                    return;
+                }
+
+                // Queue the ship using AddShipToShipyardQueue
+                bool success = faction.AddShipToShipyardQueue(shipyard, design, allowPayFromEarth);
+
+                if (success)
+                {
+                    var queueSize = faction.nShipyardQueues[shipyard]?.Count ?? 1;
+                    float buildDays = cost.completionTime_days;
+                    TISpeechMod.Speak($"Queued {className} at {shipyard.hab?.displayName}, position {queueSize}. Build time: {buildDays:N0} days.", interrupt: true);
+                    MelonLogger.Msg($"Queued {className} at {shipyard.hab?.displayName}");
+
+                    // Invalidate cache and refresh navigation
+                    shipyardsScreen.InvalidateSectionCache();
+                    navigation.RefreshSections();
+                }
+                else
+                {
+                    TISpeechMod.Speak($"Failed to queue {className}", interrupt: true);
+                    MelonLogger.Warning($"Failed to queue {className} at {shipyard.hab?.displayName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error adding to queue: {ex.Message}");
+                TISpeechMod.Speak("Error adding to queue", interrupt: true);
             }
         }
 
