@@ -541,5 +541,248 @@ namespace TISpeech.ReviewMode.InputHandlers
                 TISpeechMod.Speak("Error selecting launch orbit", interrupt: true);
             }
         }
+
+        /// <summary>
+        /// Open selection mode to choose a target for a combat operation (Assault, Bombard, Destroy).
+        /// </summary>
+        public void SelectCombatTargetForFleet(TISpaceFleetState fleet, Type operationType)
+        {
+            if (fleet == null)
+            {
+                TISpeechMod.Speak("No fleet selected", interrupt: true);
+                return;
+            }
+
+            try
+            {
+                if (!OperationsManager.operationsLookup.TryGetValue(operationType, out var op))
+                {
+                    TISpeechMod.Speak("Operation not found", interrupt: true);
+                    return;
+                }
+
+                var fleetOp = op as TISpaceFleetOperationTemplate;
+                if (fleetOp == null)
+                {
+                    TISpeechMod.Speak("Invalid operation type", interrupt: true);
+                    return;
+                }
+
+                string opName = fleetOp.GetDisplayName();
+                var targets = fleetOp.GetPossibleTargets(fleet);
+
+                if (targets.Count == 0)
+                {
+                    TISpeechMod.Speak($"No valid targets for {opName}", interrupt: true);
+                    return;
+                }
+
+                // Build selection options based on target type
+                var options = targets.Select(t =>
+                {
+                    string name;
+                    string detail;
+
+                    if (t.ref_hab != null)
+                    {
+                        name = t.ref_hab.displayName;
+                        detail = $"{t.ref_hab.faction?.displayName ?? "Unknown"} - {(t.ref_hab.IsBase ? "Base" : "Station")}";
+                    }
+                    else if (t.isRegionState)
+                    {
+                        var region = t as TIRegionState;
+                        name = region?.displayName ?? t.displayName ?? "Unknown";
+                        detail = region?.nation?.displayName ?? "";
+                    }
+                    else if (t.isArmyState)
+                    {
+                        var army = t as TIArmyState;
+                        name = army?.displayName ?? "Army";
+                        detail = army?.faction?.displayName ?? "";
+                    }
+                    else
+                    {
+                        name = t.displayName ?? "Unknown target";
+                        detail = t.ref_spaceBody?.displayName ?? "";
+                    }
+
+                    return new SelectionOption
+                    {
+                        Label = name,
+                        DetailText = detail,
+                        Data = t
+                    };
+                }).ToList();
+
+                enterSelectionMode(
+                    $"Select target for {opName}",
+                    options,
+                    selectedIndex =>
+                    {
+                        if (selectedIndex >= 0 && selectedIndex < targets.Count)
+                        {
+                            var target = targets[selectedIndex];
+                            ExecuteCombatOperation(fleet, fleetOp, target, opName);
+                        }
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error selecting combat target: {ex.Message}");
+                TISpeechMod.Speak("Error selecting combat target", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Execute a combat operation against the selected target.
+        /// </summary>
+        private void ExecuteCombatOperation(TISpaceFleetState fleet, TISpaceFleetOperationTemplate operation, TIGameState target, string opName)
+        {
+            try
+            {
+                // Verify the operation can still be performed
+                if (!operation.ActorCanPerformOperation(fleet, target))
+                {
+                    TISpeechMod.Speak($"Cannot perform {opName} on this target", interrupt: true);
+                    return;
+                }
+
+                string targetName = target.ref_hab?.displayName ?? target.displayName ?? "target";
+
+                // For contested operations like Assault, get success chance if available
+                string successInfo = "";
+                if (operation is IContestedOperation contestedOp)
+                {
+                    float successChance = contestedOp.GetSuccessChance(fleet, target);
+                    successInfo = $" Success chance: {successChance * 100:F0}%.";
+                }
+
+                // Get duration
+                float duration = operation.GetDuration_days(fleet, target, null);
+                string durationInfo = duration > 0 ? $" Duration: {duration:F1} days." : "";
+
+                // Execute the operation
+                bool success = operation.OnOperationConfirm(fleet, target, null, null);
+
+                if (success)
+                {
+                    TISpeechMod.Speak($"{opName} initiated against {targetName}.{successInfo}{durationInfo}", interrupt: true);
+                    MelonLogger.Msg($"{opName} initiated by {fleet.displayName} against {targetName}");
+                }
+                else
+                {
+                    TISpeechMod.Speak($"Failed to initiate {opName}", interrupt: true);
+                    MelonLogger.Warning($"Failed to initiate {opName} for {fleet.displayName}");
+                }
+
+                // Refresh navigation state after operation
+                refreshNavigation?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing combat operation: {ex.Message}");
+                TISpeechMod.Speak($"Error executing {opName}", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Open selection mode to choose a station to dock at.
+        /// </summary>
+        public void SelectDockingTargetForFleet(TISpaceFleetState fleet)
+        {
+            if (fleet == null)
+            {
+                TISpeechMod.Speak("No fleet selected", interrupt: true);
+                return;
+            }
+
+            try
+            {
+                var stations = FleetReader.GetNearbyDockableStations(fleet);
+
+                if (stations.Count == 0)
+                {
+                    TISpeechMod.Speak("No stations nearby to dock at", interrupt: true);
+                    return;
+                }
+
+                // If only one station, dock directly
+                if (stations.Count == 1)
+                {
+                    ExecuteDocking(fleet, stations[0]);
+                    return;
+                }
+
+                // Build selection options
+                var options = stations.Select(s =>
+                {
+                    string faction = s.faction?.displayName ?? "Unknown";
+                    bool isFriendly = fleet.faction.permanentAlly(s.faction);
+                    bool requiresCombat = s.DockingRequiresCombat(fleet, s.CanDefendHabWithSTOFighters());
+
+                    string detail = isFriendly ? "Friendly" :
+                                   requiresCombat ? "Combat required" : "Undefended";
+
+                    return new SelectionOption
+                    {
+                        Label = s.displayName,
+                        DetailText = $"{faction} - {detail}",
+                        Data = s
+                    };
+                }).ToList();
+
+                enterSelectionMode(
+                    "Select station to dock at",
+                    options,
+                    selectedIndex =>
+                    {
+                        if (selectedIndex >= 0 && selectedIndex < stations.Count)
+                        {
+                            ExecuteDocking(fleet, stations[selectedIndex]);
+                        }
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error selecting docking target: {ex.Message}");
+                TISpeechMod.Speak("Error selecting docking target", interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Execute docking at the selected station.
+        /// </summary>
+        private void ExecuteDocking(TISpaceFleetState fleet, TIHabState station)
+        {
+            try
+            {
+                bool isFriendly = fleet.faction.permanentAlly(station.faction);
+                bool requiresCombat = station.DockingRequiresCombat(fleet, station.CanDefendHabWithSTOFighters());
+
+                if (requiresCombat)
+                {
+                    TISpeechMod.Speak($"Initiating combat to dock at {station.displayName}", interrupt: true);
+                }
+                else
+                {
+                    TISpeechMod.Speak($"Docking at {station.displayName}", interrupt: true);
+                }
+
+                // Use the game's ApproachDock method which handles combat if needed
+                fleet.ApproachDock(station);
+
+                MelonLogger.Msg($"{fleet.displayName} approaching to dock at {station.displayName}");
+
+                // Refresh navigation state after operation
+                refreshNavigation?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error executing docking: {ex.Message}");
+                TISpeechMod.Speak("Error docking at station", interrupt: true);
+            }
+        }
     }
 }

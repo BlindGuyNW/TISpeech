@@ -57,6 +57,17 @@ namespace TISpeech.ReviewMode.Readers
         /// </summary>
         public Action<TISpaceFleetState> OnSelectLaunchOrbit { get; set; }
 
+        /// <summary>
+        /// Callback for selecting a target for a combat operation (Assault, Bombard, Destroy).
+        /// Parameters: fleet, operation type
+        /// </summary>
+        public Action<TISpaceFleetState, Type> OnSelectCombatTarget { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a station to dock at.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectDockingTarget { get; set; }
+
         public string ReadSummary(TISpaceFleetState fleet)
         {
             if (fleet == null)
@@ -274,6 +285,13 @@ namespace TISpeech.ReviewMode.Readers
                 if (maintenanceSection != null)
                 {
                     sections.Add(maintenanceSection);
+                }
+
+                // Combat Operations section (Assault, Bombard, Destroy)
+                var combatSection = CreateCombatOperationsSection(fleet);
+                if (combatSection != null)
+                {
+                    sections.Add(combatSection);
                 }
             }
 
@@ -678,6 +696,21 @@ namespace TISpeech.ReviewMode.Readers
                     }
                 }
 
+                // Dock At Station - when fleet is in orbit near a station (not already docked)
+                if (!fleet.dockedAtHab && !fleet.landed && !fleet.transferAssigned)
+                {
+                    var nearbyStations = GetNearbyDockableStations(fleet);
+                    if (nearbyStations.Count > 0)
+                    {
+                        string status = nearbyStations.Count == 1
+                            ? $"Dock at {nearbyStations[0].displayName}"
+                            : $"{nearbyStations.Count} stations available";
+
+                        section.AddItem("Dock At Station", status,
+                            onActivate: () => OnSelectDockingTarget?.Invoke(fleetCopy));
+                    }
+                }
+
                 // Land On Surface - when fleet is in orbit (not landed, not docked)
                 if (!fleet.landed && !fleet.dockedAtHab)
                 {
@@ -892,6 +925,161 @@ namespace TISpeech.ReviewMode.Readers
         }
 
         /// <summary>
+        /// Create the Combat Operations section for Assault, Bombard, and Destroy operations.
+        /// These operations require the fleet to be in position (interface orbit, docked at enemy, etc.)
+        /// </summary>
+        private ISection CreateCombatOperationsSection(TISpaceFleetState fleet)
+        {
+            var section = new DataSection("Combat Operations");
+            var fleetCopy = fleet; // Capture for closures
+
+            try
+            {
+                // Assault Hab - requires being at an enemy hab (docked or in interface orbit)
+                var assaultOp = GetFleetOperation<AssaultHabOperation>();
+                if (assaultOp != null && assaultOp.OpVisibleToActor(fleet))
+                {
+                    var targets = assaultOp.GetPossibleTargets(fleet);
+                    bool canAssault = assaultOp.ActorCanPerformOperation(fleet, null) && targets.Count > 0;
+                    string status;
+
+                    if (canAssault)
+                    {
+                        status = targets.Count == 1
+                            ? $"Can assault {targets[0].ref_hab?.displayName ?? "target"}"
+                            : $"{targets.Count} targets available";
+                    }
+                    else
+                    {
+                        status = GetCombatBlockedReason(fleet, "assault");
+                    }
+
+                    section.AddItem("Assault Hab", status,
+                        onActivate: canAssault ? () => OnSelectCombatTarget?.Invoke(fleetCopy, typeof(AssaultHabOperation)) : null);
+                }
+
+                // Bombard - requires being in interface orbit with bombardment capability
+                // There are different bombard operations (Low, Med, High altitude)
+                var bombardLowOp = GetFleetOperation<BombardOperation_Low>();
+                if (bombardLowOp != null && bombardLowOp.OpVisibleToActor(fleet))
+                {
+                    var targets = bombardLowOp.GetPossibleTargets(fleet);
+                    bool canBombard = bombardLowOp.ActorCanPerformOperation(fleet, null) && targets.Count > 0;
+                    string status;
+
+                    if (canBombard)
+                    {
+                        status = targets.Count == 1
+                            ? $"Can bombard {targets[0].displayName ?? "target"}"
+                            : $"{targets.Count} targets available";
+                    }
+                    else
+                    {
+                        status = GetCombatBlockedReason(fleet, "bombard");
+                    }
+
+                    Action activateAction = canBombard ? (Action)(() => OnSelectCombatTarget?.Invoke(fleetCopy, typeof(BombardOperation_Low))) : null;
+                    section.AddItem("Bombard (Low Altitude)", status, onActivate: activateAction);
+                }
+
+                // Medium altitude bombard
+                var bombardMedOp = GetFleetOperation<BombardOperation_Med>();
+                if (bombardMedOp != null && bombardMedOp.OpVisibleToActor(fleet))
+                {
+                    var targets = bombardMedOp.GetPossibleTargets(fleet);
+                    bool canBombard = bombardMedOp.ActorCanPerformOperation(fleet, null) && targets.Count > 0;
+                    string status;
+
+                    if (canBombard)
+                    {
+                        status = targets.Count == 1
+                            ? $"Can bombard {targets[0].displayName ?? "target"}"
+                            : $"{targets.Count} targets available";
+                    }
+                    else
+                    {
+                        status = GetCombatBlockedReason(fleet, "bombard");
+                    }
+
+                    Action activateAction = canBombard ? (Action)(() => OnSelectCombatTarget?.Invoke(fleetCopy, typeof(BombardOperation_Med))) : null;
+                    section.AddItem("Bombard (Medium Altitude)", status, onActivate: activateAction);
+                }
+
+                // High altitude bombard
+                var bombardHighOp = GetFleetOperation<BombardOperation_High>();
+                if (bombardHighOp != null && bombardHighOp.OpVisibleToActor(fleet))
+                {
+                    var targets = bombardHighOp.GetPossibleTargets(fleet);
+                    bool canBombard = bombardHighOp.ActorCanPerformOperation(fleet, null) && targets.Count > 0;
+                    string status;
+
+                    if (canBombard)
+                    {
+                        status = targets.Count == 1
+                            ? $"Can bombard {targets[0].displayName ?? "target"}"
+                            : $"{targets.Count} targets available";
+                    }
+                    else
+                    {
+                        status = GetCombatBlockedReason(fleet, "bombard");
+                    }
+
+                    Action activateAction = canBombard ? (Action)(() => OnSelectCombatTarget?.Invoke(fleetCopy, typeof(BombardOperation_High))) : null;
+                    section.AddItem("Bombard (High Altitude)", status, onActivate: activateAction);
+                }
+
+                // Destroy Hab - requires being docked at or adjacent to enemy hab
+                var destroyOp = GetFleetOperation<DestroyHabOperation>();
+                if (destroyOp != null && destroyOp.OpVisibleToActor(fleet))
+                {
+                    var targets = destroyOp.GetPossibleTargets(fleet);
+                    bool canDestroy = destroyOp.ActorCanPerformOperation(fleet, null) && targets.Count > 0;
+                    string status;
+
+                    if (canDestroy)
+                    {
+                        status = targets.Count == 1
+                            ? $"Can destroy {targets[0].ref_hab?.displayName ?? "target"}"
+                            : $"{targets.Count} targets available";
+                    }
+                    else
+                    {
+                        status = GetCombatBlockedReason(fleet, "destroy");
+                    }
+
+                    section.AddItem("Destroy Hab", status,
+                        onActivate: canDestroy ? () => OnSelectCombatTarget?.Invoke(fleetCopy, typeof(DestroyHabOperation)) : null);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error creating Combat Operations section: {ex.Message}");
+            }
+
+            return section.ItemCount > 0 ? section : null;
+        }
+
+        /// <summary>
+        /// Get the reason why a combat operation cannot be performed.
+        /// </summary>
+        private string GetCombatBlockedReason(TISpaceFleetState fleet, string opType)
+        {
+            if (fleet.transferAssigned)
+                return "Fleet is in transit";
+            if (fleet.inCombatOrWaitingForCombat)
+                return "Fleet is in combat";
+
+            var orbitState = fleet.orbitState;
+            if (orbitState == null)
+                return "No valid orbit";
+
+            if (!fleet.dockedOrLanded && (orbitState == null || !orbitState.interfaceOrbit))
+                return $"Must be in interface orbit to {opType}";
+
+            return $"No valid targets for {opType}";
+        }
+
+        /// <summary>
         /// Get a formatted cost string for an operation.
         /// </summary>
         private string GetOperationCostString(TISpaceFleetState fleet, TISpaceFleetOperationTemplate operation)
@@ -1061,6 +1249,57 @@ namespace TISpeech.ReviewMode.Readers
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error getting homeport options: {ex.Message}");
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Get stations that the fleet can dock at from its current position.
+        /// This includes friendly stations and enemy stations (which may require combat).
+        /// </summary>
+        public static List<TIHabState> GetNearbyDockableStations(TISpaceFleetState fleet)
+        {
+            var result = new List<TIHabState>();
+            if (fleet == null)
+                return result;
+
+            try
+            {
+                // Fleet must be in orbit (not docked, not landed, not in transfer)
+                if (fleet.dockedAtHab || fleet.landed || fleet.transferAssigned)
+                    return result;
+
+                var orbitState = fleet.orbitState;
+                if (orbitState == null)
+                    return result;
+
+                // Find all stations in the same orbit or nearby
+                // A station is dockable if the fleet is in a matching orbit
+                var allHabs = GameStateManager.IterateByClass<TIHabState>();
+                foreach (var hab in allHabs)
+                {
+                    if (hab == null || hab.IsBase) // Only stations, not bases
+                        continue;
+
+                    // Check if fleet is in a position to dock
+                    // The fleet needs to be in the same orbit as the station
+                    var habOrbit = hab.orbitState;
+                    if (habOrbit == null)
+                        continue;
+
+                    // Check if they're in the same orbit
+                    if (orbitState == habOrbit ||
+                        (orbitState.barycenter == habOrbit.barycenter &&
+                         orbitState.semiMajorAxis_km == habOrbit.semiMajorAxis_km))
+                    {
+                        result.Add(hab);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error getting nearby stations: {ex.Message}");
             }
 
             return result;

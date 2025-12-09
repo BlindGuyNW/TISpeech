@@ -31,6 +31,8 @@ namespace TISpeech.ReviewMode
         SelectHab,
         /// <summary>Select an enemy fleet to intercept</summary>
         SelectEnemyFleet,
+        /// <summary>Select an enemy hab to attack</summary>
+        SelectEnemyHab,
         /// <summary>View and select from trajectory options</summary>
         ViewTrajectories,
         /// <summary>Confirm the transfer assignment</summary>
@@ -44,7 +46,8 @@ namespace TISpeech.ReviewMode
     {
         OrbitAroundBody,
         SpecificHab,
-        InterceptFleet
+        InterceptFleet,
+        EnemyHab
     }
 
     /// <summary>
@@ -106,6 +109,11 @@ namespace TISpeech.ReviewMode
         public TISpaceFleetState TargetFleet { get; private set; }
 
         /// <summary>
+        /// Selected enemy hab to attack.
+        /// </summary>
+        public TIHabState SelectedEnemyHab { get; private set; }
+
+        /// <summary>
         /// Computed trajectory options.
         /// </summary>
         public Trajectory[] Trajectories { get; private set; }
@@ -164,6 +172,7 @@ namespace TISpeech.ReviewMode
         private List<TIOrbitState> originOrbits;
         private List<TIHabState> habs;
         private List<TISpaceFleetState> enemyFleets;
+        private List<TIHabState> enemyHabs;
 
         private readonly OrbitReader orbitReader = new OrbitReader();
         private readonly TrajectoryReader trajectoryReader = new TrajectoryReader();
@@ -239,7 +248,7 @@ namespace TISpeech.ReviewMode
                 }
             };
 
-            // Only add fleet intercept for actual fleets
+            // Only add fleet intercept and enemy hab for actual fleets
             if (!IsTheoreticalMode)
             {
                 destinationTypeOptions.Add(new SelectionOption
@@ -247,6 +256,12 @@ namespace TISpeech.ReviewMode
                     Label = "Intercept enemy fleet",
                     DetailText = "Pursue and engage an enemy fleet",
                     Data = TransferDestinationType.InterceptFleet
+                });
+                destinationTypeOptions.Add(new SelectionOption
+                {
+                    Label = "Attack enemy station or base",
+                    DetailText = "Travel to an enemy hab to bombard or assault",
+                    Data = TransferDestinationType.EnemyHab
                 });
             }
         }
@@ -368,6 +383,35 @@ namespace TISpeech.ReviewMode
             }
         }
 
+        private void LoadEnemyHabs()
+        {
+            enemyHabs = new List<TIHabState>();
+
+            try
+            {
+                var faction = GameControl.control?.activePlayer;
+                if (faction == null) return;
+
+                // Get all known enemy habs (stations and bases we have intel on)
+                enemyHabs = GameStateManager.IterateByClass<TIHabState>()
+                    .Where(h => h != null &&
+                           h.faction != null &&
+                           h.faction != faction &&
+                           !h.faction.permanentAlly(faction) &&
+                           faction.GetIntel(h) > 0) // Must have some intel on the hab
+                    .OrderBy(h => h.faction?.displayName ?? "")
+                    .ThenBy(h => h.ref_spaceBody?.displayName ?? "")
+                    .ThenBy(h => h.displayName)
+                    .ToList();
+
+                MelonLogger.Msg($"TransferSubMode: Loaded {enemyHabs.Count} enemy habs");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error loading enemy habs: {ex.Message}");
+            }
+        }
+
         #endregion
 
         #region Navigation
@@ -390,6 +434,7 @@ namespace TISpeech.ReviewMode
                     TransferStep.SelectOrbit => orbits?.Count ?? 0,
                     TransferStep.SelectHab => habs?.Count ?? 0,
                     TransferStep.SelectEnemyFleet => enemyFleets?.Count ?? 0,
+                    TransferStep.SelectEnemyHab => enemyHabs?.Count ?? 0,
                     TransferStep.ViewTrajectories => Trajectories?.Length ?? 0,
                     TransferStep.Confirm => 2, // Yes/No
                     _ => 0
@@ -564,6 +609,10 @@ namespace TISpeech.ReviewMode
                     SelectEnemyFleet();
                     break;
 
+                case TransferStep.SelectEnemyHab:
+                    SelectEnemyHab();
+                    break;
+
                 case TransferStep.ViewTrajectories:
                     // Select trajectory and go to confirm
                     if (Trajectories != null && SelectedTrajectoryIndex < Trajectories.Length)
@@ -649,6 +698,7 @@ namespace TISpeech.ReviewMode
                 case TransferStep.SelectBody:
                 case TransferStep.SelectHab:
                 case TransferStep.SelectEnemyFleet:
+                case TransferStep.SelectEnemyHab:
                     CurrentStep = TransferStep.SelectDestinationType;
                     CurrentIndex = 0;
                     AnnounceCurrentState();
@@ -672,6 +722,11 @@ namespace TISpeech.ReviewMode
                     {
                         CurrentStep = TransferStep.SelectHab;
                         CurrentIndex = habs?.IndexOf(SelectedHab) ?? 0;
+                    }
+                    else if (DestinationType == TransferDestinationType.EnemyHab)
+                    {
+                        CurrentStep = TransferStep.SelectEnemyHab;
+                        CurrentIndex = enemyHabs?.IndexOf(SelectedEnemyHab) ?? 0;
                     }
                     else
                     {
@@ -740,6 +795,10 @@ namespace TISpeech.ReviewMode
 
                 case TransferStep.SelectEnemyFleet:
                     foundIndex = FindByLetter(enemyFleets, f => f.displayName, letter);
+                    break;
+
+                case TransferStep.SelectEnemyHab:
+                    foundIndex = FindByLetter(enemyHabs, h => h.displayName, letter);
                     break;
             }
 
@@ -898,6 +957,12 @@ namespace TISpeech.ReviewMode
                     CurrentStep = TransferStep.SelectEnemyFleet;
                     CurrentIndex = 0;
                     break;
+
+                case TransferDestinationType.EnemyHab:
+                    LoadEnemyHabs();
+                    CurrentStep = TransferStep.SelectEnemyHab;
+                    CurrentIndex = 0;
+                    break;
             }
 
             AnnounceCurrentState();
@@ -947,6 +1012,16 @@ namespace TISpeech.ReviewMode
 
             TargetFleet = enemyFleets[CurrentIndex];
             ComputeTrajectories(TargetFleet);
+        }
+
+        private void SelectEnemyHab()
+        {
+            if (enemyHabs == null || CurrentIndex >= enemyHabs.Count)
+                return;
+
+            SelectedEnemyHab = enemyHabs[CurrentIndex];
+            // Transfer to the enemy hab - the game will route to the appropriate orbit
+            ComputeTrajectories(SelectedEnemyHab);
         }
 
         #endregion
@@ -1111,6 +1186,7 @@ namespace TISpeech.ReviewMode
                 TransferStep.SelectOrbit => $"Select orbit around {SelectedBody?.displayName} ({orbits?.Count ?? 0} options)",
                 TransferStep.SelectHab => $"Select station or base ({habs?.Count ?? 0} options)",
                 TransferStep.SelectEnemyFleet => $"Select enemy fleet to intercept ({enemyFleets?.Count ?? 0} options)",
+                TransferStep.SelectEnemyHab => $"Select enemy station or base to attack ({enemyHabs?.Count ?? 0} options)",
                 TransferStep.ViewTrajectories => $"Select trajectory ({Trajectories?.Length ?? 0} options). Tab to change sort.",
                 TransferStep.Confirm => GetConfirmationPrompt(),
                 _ => "Transfer planning"
@@ -1154,6 +1230,7 @@ namespace TISpeech.ReviewMode
                 TransferStep.SelectOrbit => GetOrbitAnnouncement(posStr),
                 TransferStep.SelectHab => GetHabAnnouncement(posStr),
                 TransferStep.SelectEnemyFleet => GetEnemyFleetAnnouncement(posStr),
+                TransferStep.SelectEnemyHab => GetEnemyHabAnnouncement(posStr),
                 TransferStep.ViewTrajectories => GetTrajectoryAnnouncement(posStr),
                 TransferStep.Confirm => GetConfirmOptionAnnouncement(posStr),
                 _ => ""
@@ -1255,6 +1332,18 @@ namespace TISpeech.ReviewMode
             string faction = fleet.faction?.displayName ?? "Unknown";
             int ships = fleet.ships?.Count ?? 0;
             return $"{fleet.displayName} ({faction}), {ships} ship{(ships != 1 ? "s" : "")}, {posStr}";
+        }
+
+        private string GetEnemyHabAnnouncement(string posStr)
+        {
+            if (enemyHabs == null || CurrentIndex >= enemyHabs.Count)
+                return "";
+
+            var hab = enemyHabs[CurrentIndex];
+            string faction = hab.faction?.displayName ?? "Unknown";
+            string location = hab.ref_spaceBody?.displayName ?? "Unknown";
+            string habType = hab.IsBase ? "Base" : "Station";
+            return $"{hab.displayName} ({faction} {habType}) at {location}, {posStr}";
         }
 
         private string GetTrajectoryAnnouncement(string posStr)

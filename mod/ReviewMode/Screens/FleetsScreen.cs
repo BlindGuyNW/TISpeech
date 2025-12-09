@@ -261,6 +261,8 @@ namespace TISpeech.ReviewMode.Screens
             fleetReader.OnExecuteMaintenanceOperation = OnExecuteMaintenanceOperation;
             fleetReader.OnSelectLandingSite = OnSelectLandingSite;
             fleetReader.OnSelectLaunchOrbit = OnSelectLaunchOrbit;
+            fleetReader.OnSelectCombatTarget = OnSelectCombatTarget;
+            fleetReader.OnSelectDockingTarget = OnSelectDockingTarget;
 
             var fleet = items[index];
             cachedItemIndex = index;
@@ -303,6 +305,16 @@ namespace TISpeech.ReviewMode.Screens
         /// Callback for selecting a launch orbit for the fleet.
         /// </summary>
         public Action<TISpaceFleetState> OnSelectLaunchOrbit { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a combat target (for assault, bombard, destroy operations).
+        /// </summary>
+        public Action<TISpaceFleetState, Type> OnSelectCombatTarget { get; set; }
+
+        /// <summary>
+        /// Callback for selecting a station to dock at.
+        /// </summary>
+        public Action<TISpaceFleetState> OnSelectDockingTarget { get; set; }
 
         public override string GetItemSortName(int index)
         {

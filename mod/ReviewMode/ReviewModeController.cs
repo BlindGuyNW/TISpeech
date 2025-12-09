@@ -186,6 +186,8 @@ namespace TISpeech.ReviewMode
             fleetsScreen.OnExecuteMaintenanceOperation = (fleet, opType) => fleetOpsHandler?.ExecuteMaintenanceOperation(fleet, opType);
             fleetsScreen.OnSelectLandingSite = (fleet) => fleetOpsHandler?.SelectLandingSiteForFleet(fleet);
             fleetsScreen.OnSelectLaunchOrbit = (fleet) => fleetOpsHandler?.SelectLaunchOrbitForFleet(fleet);
+            fleetsScreen.OnSelectCombatTarget = (fleet, opType) => fleetOpsHandler?.SelectCombatTargetForFleet(fleet, opType);
+            fleetsScreen.OnSelectDockingTarget = (fleet) => fleetOpsHandler?.SelectDockingTargetForFleet(fleet);
 
             spaceBodiesScreen = new SpaceBodiesScreen();
             spaceBodiesScreen.OnEnterSelectionMode = EnterSelectionMode;
