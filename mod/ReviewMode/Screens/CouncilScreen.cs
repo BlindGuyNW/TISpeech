@@ -649,8 +649,9 @@ namespace TISpeech.ReviewMode.Screens
                     options,
                     (index) =>
                     {
-                        float boostLevel = (float)options[index].Data;
-                        ExecuteMissionAssignment(councilor, mission, target, boostLevel);
+                        float step = (float)options[index].Data;
+                        float resourceCost = mission.cost.GetCost(step, councilor);
+                        ExecuteMissionAssignment(councilor, mission, target, resourceCost);
                     }
                 );
             }
@@ -718,9 +719,8 @@ namespace TISpeech.ReviewMode.Screens
                 }
                 if (resourcesSpent > 0 && mission.cost != null)
                 {
-                    float cost = mission.cost.GetCost(resourcesSpent, councilor);
                     string resourceName = GetResourceName(mission.cost.resourceType);
-                    announcement += $" with {cost:F0} {resourceName} boost";
+                    announcement += $" with {resourcesSpent:F0} {resourceName} boost";
                 }
 
                 OnSpeak?.Invoke(announcement, true);

@@ -967,6 +967,7 @@ namespace TISpeech.ReviewMode
 
             orgTargetMode = new OrgTargetSubMode(councilor, mission, targets);
             orgTargetMode.OnSpeak = (text, interrupt) => TISpeechMod.Speak(text, interrupt);
+            orgTargetMode.OnEnterSelectionMode = EnterSelectionMode;
             orgTargetMode.OnTargetSelected = () =>
             {
                 orgTargetMode = null;
